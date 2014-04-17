@@ -48,9 +48,9 @@ classifiers = [
 
 # Long Description
 long_description = '''GiMMiK is a Python based kernel generator for matrix 
-multiplication kernels for use on accelerator platforms. For small operator 
-matrices the generated kernel are capable of outperfoming the state-of-the-art 
-general matrix multiplication routines such as cuBLAS GEMM.
+multiplication kernels for various accelerator platforms. For small operator 
+matrices the generated kernels are capable of outperfoming the state-of-the-art 
+general matrix multiplication routines such as cuBLAS GEMM or clBLAS GEMM.
 GiMMiK is currently being developed as part of Bartosz Wozniak's Master Thesis 
 in the Department of Computing at Imperial College London under the supervision
 of Prof. Paul Kelly and Dr. Peter Vincent.'''
