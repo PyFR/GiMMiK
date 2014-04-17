@@ -7,7 +7,7 @@ from gimmik.platform import Platform
 from mako.template import Template
 
 def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
-                   embedded=True, reduced=True):
+                   reduced=True, embedded=True):
 
     """Generate source code for a matrix multiplication kernel.
 
@@ -19,15 +19,20 @@ def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
 
     Args:
         data (:class:`numpy.array`): The operator matrix *A*.
+
         platform (:class:`gimmik.Platform`): The platform to generate code for
-            e.g. *Platform.CUDA*. See :class:`gimmik.Platform` for more detail.
+        e.g. *Platform.CUDA*. See :class:`gimmik.Platform` for more detail.
 
     Kwargs:
         alpha (float): Operator matrix multiplier. See description.
+
         beta (float): Output matrix multiplier. See description.
+
         double (bool): If True double-precision mode is used.
-            Single-precision otherwise.
+        Single-precision otherwise.
+        
         reduced (bool): If True common sub-expressions will be eliminated.
+
         embedded (bool): Currently unused.
 
     Returns:
