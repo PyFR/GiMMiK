@@ -18,10 +18,10 @@ def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
     executed on the platform of choice.
 
     Args:
-        data (:class:`numpy.array`): The operator matrix *A*.
+        data (:class:`numpy.ndarray`): The operator matrix *A*.
 
-        platform (:class:`gimmik.Platform`): The platform to generate code for
-        e.g. *Platform.CUDA*. See :class:`gimmik.Platform` for more detail.
+        platform (:class:`~gimmik.platform.Platform`): The platform to generate code for.
+        Currently one of *Platform.CUDA* or *Platform.OPENCL*.
 
     Kwargs:
         alpha (float): Operator matrix multiplier. See description.
