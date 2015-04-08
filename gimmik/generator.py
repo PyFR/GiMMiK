@@ -3,7 +3,6 @@
 import numpy as np
 from collections import defaultdict
 from gimmik.types import Matrix
-from gimmik.platform import Platform
 from mako.template import Template
 
 def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
@@ -13,8 +12,8 @@ def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
 
     Generated kernels are capable of computing a matrix product of the form
         C = alpha * A x B + beta * C.
-    The source code for the generated kernel is specialised according to the 
-    arguments given to this functions. The code can be then compiled and 
+    The source code for the generated kernel is specialised according to the
+    arguments given to this functions. The code can be then compiled and
     executed on the platform of choice.
 
     Args:
@@ -30,7 +29,7 @@ def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
 
         double (bool): If True double-precision mode is used.
         Single-precision otherwise.
-        
+
         reduced (bool): If True common sub-expressions will be eliminated.
 
         embedded (bool): Currently unused.
@@ -55,7 +54,7 @@ def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
 
     # Remove too small values
     _removeSmall(data, threshold)
-    
+
     # Close values can be aggregated together to reduce the number of constants
     _reduceSimilar(data, threshold)
 
@@ -74,7 +73,7 @@ def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
     products = _generateProducts(matrix)
 
     # !!!
-    # WARNING: The order of the subterms and products lists corresponds 
+    # WARNING: The order of the subterms and products lists corresponds
     # directly to the order in which they are output in the kernel code.
     # !!!
 
@@ -82,7 +81,7 @@ def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
     templateFile = _lookupTemplate(matrix, platform, beta, embedded, reduced)
 
     # Output the generated kernel
-    kernelTemplate = Template(filename=templateFile, disable_unicode=True)
+    kernelTemplate = Template(filename=templateFile)
     kernel = kernelTemplate.render(dtype=ctype,
                                 subterms=subterms,
                                 products=products,
@@ -90,17 +89,12 @@ def generateKernel(data, platform, alpha=1.0, beta=0.0, double=True,
 
     return kernel
 
-def _lookupTemplate(matrix, platform, beta, embedded, reduced):
+def _lookupTemplate(matrix, pl, beta, embedded, reduced):
     """
     Return the filename containing an appropriate template (according to
     the arguments given) for kernel generation.
     """
     from pkg_resources import Requirement, resource_filename
-    
-    if platform is Platform.CUDA:
-        pl = 'cuda'
-    elif platform is Platform.OPENCL:
-        pl = 'opencl'
 
     if reduced:
         return resource_filename(__name__, 'kernels/' + pl + '/bpmm.mako')
@@ -146,7 +140,7 @@ def _generateProducts(matrix):
     """
     products = []
     for row in matrix.rowData:
-        products.append({nz: tuple(subterm) for nz, subterm in row.iteritems()})
+        products.append({nz: tuple(subterm) for nz, subterm in row.items()})
     return products
 
 def _removeSmall(data, threshold):

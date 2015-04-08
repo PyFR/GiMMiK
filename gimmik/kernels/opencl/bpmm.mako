@@ -3,7 +3,7 @@
 ## <%page args="dtype, beta, subterms, products" />
 ##
 #pragma OPENCL EXTENSION cl_khr_fp64 : enable
-__kernel void 
+__kernel void
 gimmik_mm(__global const ${dtype}* restrict b,
           __global ${dtype}* restrict c,
           const int width,
@@ -23,7 +23,7 @@ gimmik_mm(__global const ${dtype}* restrict b,
 b_local[${term} * bstride] + \
         % else:
 b_local[${term} * bstride];
-        % endif 
+        % endif
     % endfor
 % endfor
 
@@ -37,7 +37,7 @@ c_local[${loop.index} * cstride] + \
 0;
 <% continue %>
     % endif
-    % for constant, subterm in product.iteritems():
+    % for constant, subterm in product.items():
         % if loop.index < len(product) - 1:
 ${repr(constant)}${'f' if (dtype == 'float') else ''} * \
 subterm_${subterms.index(subterm)} + \

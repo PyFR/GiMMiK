@@ -3,7 +3,6 @@
 import unittest
 import numpy as np
 import gimmik.generator as gen
-from gimmik.platform import Platform
 import pyopencl as cl
 
 class KernelGenerationTestCase(unittest.TestCase):
@@ -12,7 +11,7 @@ class KernelGenerationTestCase(unittest.TestCase):
         # Define matrix size
         self.size = 40
         # Define platform type
-        self.platform = Platform.OPENCL
+        self.platform = 'opencl'
 
     def tearDown(self):
         pass
@@ -76,7 +75,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateReducedDouble(self):
         # Define test parameters
         alpha = 1.0
-        beta = 0.0 
+        beta = 0.0
         double=True
         reduced=True
         # Execute the test
@@ -85,7 +84,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateReducedSingle(self):
         # Define test parameters
         alpha = 1.0
-        beta = 0.0 
+        beta = 0.0
         double=False
         reduced=True
         # Execute the test
@@ -94,7 +93,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateNotReducedDouble(self):
         # Define test parameters
         alpha = 1.0
-        beta = 0.0 
+        beta = 0.0
         double=True
         reduced=False
         # Execute the test
@@ -103,7 +102,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateNotReducedSingle(self):
         # Define test parameters
         alpha = 1.0
-        beta = 0.0 
+        beta = 0.0
         double=True
         reduced=False
         # Execute the test
@@ -112,7 +111,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateAlphaBetaDouble(self):
         # Define test parameters
         alpha = 2.0
-        beta = 3.0 
+        beta = 3.0
         double=True
         reduced=True
         # Execute the test
@@ -121,7 +120,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateAlphaBetaSingle(self):
         # Define test parameters
         alpha = 2.0
-        beta = 3.0 
+        beta = 3.0
         double=False
         reduced=True
         # Execute the test
