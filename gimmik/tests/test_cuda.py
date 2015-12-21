@@ -3,8 +3,7 @@
 import unittest
 import numpy as np
 import gimmik.generator as gen
-from gimmik.platform import Platform
-from pycuda import driver, compiler, gpuarray 
+from pycuda import driver, compiler, gpuarray
 from pycuda.tools import mark_cuda_test
 
 class KernelGenerationTestCase(unittest.TestCase):
@@ -13,7 +12,7 @@ class KernelGenerationTestCase(unittest.TestCase):
         # Define matrix size
         self.size = 40
         # Define platform type
-        self.platform = Platform.CUDA
+        self.platform = 'cuda'
 
     def tearDown(self):
         pass
@@ -51,11 +50,11 @@ class KernelGenerationTestCase(unittest.TestCase):
         module = compiler.SourceModule(kernel)
         function = module.get_function('gimmik_mm')
         block, grid = (self.size, 1, 1), (1, 1)
-        function(b_gpu, 
-                 c_gpu, 
-                 np.int32(self.size), 
-                 np.int32(bstride), 
-                 np.int32(cstride), 
+        function(b_gpu,
+                 c_gpu,
+                 np.int32(self.size),
+                 np.int32(bstride),
+                 np.int32(cstride),
                  block=block,
                  grid=grid)
 
@@ -71,7 +70,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateReducedDouble(self):
         # Define test parameters
         alpha = 1.0
-        beta = 0.0 
+        beta = 0.0
         double=True
         reduced=True
         # Execute the test
@@ -81,7 +80,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateReducedSingle(self):
         # Define test parameters
         alpha = 1.0
-        beta = 0.0 
+        beta = 0.0
         double=False
         reduced=True
         # Execute the test
@@ -91,7 +90,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateNotReducedDouble(self):
         # Define test parameters
         alpha = 1.0
-        beta = 0.0 
+        beta = 0.0
         double=True
         reduced=False
         # Execute the test
@@ -101,7 +100,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateNotReducedSingle(self):
         # Define test parameters
         alpha = 1.0
-        beta = 0.0 
+        beta = 0.0
         double=True
         reduced=False
         # Execute the test
@@ -111,7 +110,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateAlphaBetaDouble(self):
         # Define test parameters
         alpha = 2.0
-        beta = 3.0 
+        beta = 3.0
         double=True
         reduced=True
         # Execute the test
@@ -121,7 +120,7 @@ class KernelGenerationTestCase(unittest.TestCase):
     def test_generateAlphaBetaSingle(self):
         # Define test parameters
         alpha = 2.0
-        beta = 3.0 
+        beta = 3.0
         double=False
         reduced=True
         # Execute the test

@@ -2,7 +2,7 @@
 ##
 ## <%page args="dtype, beta, subterms, products" />
 ##
-__global__ void 
+__global__ void
 gimmik_mm(const ${dtype}* __restrict__ b,
           ${dtype}* __restrict__ c,
           const int width,
@@ -22,7 +22,7 @@ gimmik_mm(const ${dtype}* __restrict__ b,
 b_local[${term} * bstride] + \
         % else:
 b_local[${term} * bstride];
-        % endif 
+        % endif
     % endfor
 % endfor
 
@@ -36,7 +36,7 @@ c_local[${loop.index} * cstride] + \
 0;
 <% continue %>
     % endif
-    % for constant, subterm in product.iteritems():
+    % for constant, subterm in product.items():
         % if loop.index < len(product) - 1:
             % for s in subterm:
 ${repr(constant)}${'f' if (dtype == 'float') else ''} * \

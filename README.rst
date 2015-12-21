@@ -53,7 +53,7 @@ Once installed, you are ready to use GiMMiK.
 
     # Generate kernel
     kernel = gen.generateKernel(data, alpha=2.0, beta=3.0, double=True, reduced=True,
-                                platform=Platform.OPENCL)
+                                platform='opencl')
 
     ...
 
