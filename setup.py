@@ -8,7 +8,7 @@ from setuptools import setup
 
 # Python version
 if sys.version_info[:2] < (2, 7):
-    print('PyFR requires Python 2.7 or newer. Python {}.{} detected'
+    print('GiMMiK requires Python 2.7 or newer. Python {}.{} detected'
           .format(*sys.version_info[:2]))
     sys.exit(-1)
 
@@ -47,31 +47,31 @@ classifiers = [
 ]
 
 # Long Description
-long_description = '''GiMMiK is a Python based kernel generator for matrix 
-multiplication kernels for various accelerator platforms. For small operator 
-matrices the generated kernels are capable of outperfoming the state-of-the-art 
+long_description = '''GiMMiK is a Python based kernel generator for matrix
+multiplication kernels for various accelerator platforms. For small operator
+matrices the generated kernels are capable of outperfoming the state-of-the-art
 general matrix multiplication routines such as cuBLAS GEMM or clBLAS GEMM.
-GiMMiK is currently being developed as part of Bartosz Wozniak's Master Thesis 
+GiMMiK is currently being developed as part of Bartosz Wozniak's Master Thesis
 in the Department of Computing at Imperial College London under the supervision
 of Prof. Paul Kelly and Dr. Peter Vincent.'''
 
-setup(name = 'gimmik',
-      version = version,
+setup(name='gimmik',
+      version=version,
 
-      # packages
-      packages = ['gimmik'],
-      package_data = package_data,
-      install_requires = install_requires,
+      # Packages
+      packages=['gimmik'],
+      package_data=package_data,
+      install_requires=install_requires,
 
-      # tests
-      test_suite = 'gimmik.tests',
-      tests_require = tests_require,
+      # Tests
+      test_suite='gimmik.tests',
+      tests_require=tests_require,
 
-      # metadata
-      description = 'Generator of Matrix Multiplication Kernels',
-      long_description = long_description,
-      author = 'Bartosz Wozniak',
-      url = 'https://github.com/bartwozniak/GiMMiK',
-      license = 'BSD',
-      keywords = ['Matrix Multiplication', 'GPU', 'CUDA', 'OpenCL'],
-      classifiers = classifiers)
+      # Metadata
+      description='Generator of Matrix Multiplication Kernels',
+      long_description=long_description,
+      author='Imperial College London',
+      url='https://github.com/vincentlab/GiMMiK',
+      license='BSD',
+      keywords=['Matrix Multiplication', 'GPU', 'CUDA', 'OpenCL'],
+      classifiers=classifiers)
