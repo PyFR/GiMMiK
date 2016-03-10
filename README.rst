@@ -59,4 +59,4 @@ Once installed, you are ready to use GiMMiK.
 
 Who uses GiMMiK?
 ----------------
-GiMMiK was develop to improve performance of the `PyFR <http://www.pyfr.com>`_ framework for solving advection-diffusion type problems in the area of CFD.
+GiMMiK was develop to improve performance of the `PyFR <http://www.pyfr.org>`_ framework for solving advection-diffusion type problems in the area of CFD.
