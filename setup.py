@@ -2,14 +2,13 @@
 # -*- coding: utf-8 -*-
 
 import re
-import sys
 from setuptools import setup
+import sys
 
 
 # Python version
-if sys.version_info[:2] < (2, 7):
-    print('GiMMiK requires Python 2.7 or newer. Python {}.{} detected'
-          .format(*sys.version_info[:2]))
+if sys.version_info[:2] < (3, 3):
+    print('GiMMiK requires Python 3.3 or newer')
     sys.exit(-1)
 
 # GiMMiK version
@@ -21,10 +20,9 @@ if vsrch:
 else:
     print('Unable to find a version string in gimmik/_version.py')
 
-
 # Data
 package_data = {
-    'gimmik': ['kernels/*/*.mako'],
+    'gimmik': ['kernels/*.mako'],
 }
 
 # Hard dependencies
@@ -33,27 +31,22 @@ install_requires = [
     'numpy >= 1.7'
 ]
 
-# Tests dependencies
-tests_require = [
-    'pycuda >= 2011.2',
-    'pyopencl >= 2013.2'
-]
-
 # Info
 classifiers = [
     'License :: OSI Approved :: New BSD License',
-    'Programming Language :: Python :: 2.7',
+    'Programming Language :: Python :: 3.3',
     'Topic :: Scientific/Engineering'
 ]
 
 # Long Description
-long_description = '''GiMMiK is a Python based kernel generator for matrix
-multiplication kernels for various accelerator platforms. For small operator
-matrices the generated kernels are capable of outperfoming the state-of-the-art
-general matrix multiplication routines such as cuBLAS GEMM or clBLAS GEMM.
-GiMMiK is currently being developed as part of Bartosz Wozniak's Master Thesis
-in the Department of Computing at Imperial College London under the supervision
-of Prof. Paul Kelly and Dr. Peter Vincent.'''
+long_description = '''GiMMiK is a Python based kernel generator for
+matrix multiplication kernels for various accelerator platforms.  For
+small operator matrices the generated kernels are capable of
+outperfoming the state-of-the-art general matrix multiplication
+routines such as cuBLAS GEMM or clBLAS GEMM.  GiMMiK was originally
+developed as part of  Bartosz Wozniak's master's thesis in the
+Department of Computing at Imperial College London and is currently
+maintained by Freddie Witherden.'''
 
 setup(name='gimmik',
       version=version,
@@ -62,10 +55,6 @@ setup(name='gimmik',
       packages=['gimmik'],
       package_data=package_data,
       install_requires=install_requires,
-
-      # Tests
-      test_suite='gimmik.tests',
-      tests_require=tests_require,
 
       # Metadata
       description='Generator of Matrix Multiplication Kernels',
