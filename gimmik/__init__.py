@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import pkgutil
+import re
 
 from mako.template import Template
 import numpy as np
@@ -26,18 +27,21 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, tol=1e-10,
     mat[abs(mat) < tol] = 0
 
     # Coalesce similar elements
-    mfl = mat.flat
-    mix = np.argsort(mfl)
+    amfl = np.abs(mat.flat)
+    amix = np.argsort(amfl)
 
-    i, ix = 0, mix[0]
-    for j, jx in enumerate(mix[1:], start=1):
-        if mfl[jx] - mfl[ix] >= tol:
+    i, ix = 0, amix[0]
+    for j, jx in enumerate(amix[1:], start=1):
+        if amfl[jx] - amfl[ix] >= tol:
             if j - i > 1:
-                mfl[mix[i:j]] = np.median(mfl[mix[i:j]])
+                amfl[amix[i:j]] = np.median(amfl[amix[i:j]])
             i, ix = j, jx
 
     if i != j:
-        mfl[mix[i:]] = np.median(mfl[mix[i:]])
+        amfl[amix[i:]] = np.median(amfl[amix[i:]])
+
+    # Fix up the signs and assign
+    mat.flat = np.copysign(amfl, mat.flat)
 
     # Load and render the template
     tpl = pkgutil.get_data(__name__, 'kernels/{0}.mako'.format(platform))
