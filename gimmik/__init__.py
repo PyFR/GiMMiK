@@ -9,8 +9,7 @@ import numpy as np
 from gimmik._version import __version__
 
 
-def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, tol=1e-10,
-                funcn='gimmik_mm'):
+def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm'):
     # Data type
     dtype = np.dtype(dtype).type
     if dtype == np.float32:
@@ -20,8 +19,8 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, tol=1e-10,
     else:
         raise ValueError('Invalid floating point data type')
 
-    # Multiply the matrix through by alpha and clean it up
-    mat = _clean(alpha*mat, tol)
+    # Multiply the matrix through by alpha
+    mat = alpha*mat
 
     # Template arguments
     tplargs = {'dtype': dtype, 'mat': mat, 'beta': beta, 'funcn': funcn}
@@ -42,33 +41,6 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, tol=1e-10,
 
     # Return the source
     return src
-
-
-def _clean(mat, tol):
-    # Copy the matrix
-    mat = mat.copy()
-
-    # Clamp small elements
-    mat[abs(mat) < tol] = 0
-
-    # Coalesce similar elements
-    amfl = np.abs(mat.flat)
-    amix = np.argsort(amfl)
-
-    i, ix = 0, amix[0]
-    for j, jx in enumerate(amix[1:], start=1):
-        if amfl[jx] - amfl[ix] >= tol:
-            if j - i > 1:
-                amfl[amix[i:j]] = np.median(amfl[amix[i:j]])
-            i, ix = j, jx
-
-    if i != j:
-        amfl[amix[i:]] = np.median(amfl[amix[i:]])
-
-    # Fix up the signs and assign
-    mat.flat = np.copysign(amfl, mat.flat)
-
-    return mat
 
 
 def _tile(mat, sizes=[1, 2, 3, 5, 7, 8], tol=0.1):
