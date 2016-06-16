@@ -6,11 +6,11 @@
 #endif
 % endif
 
-% for q, (start, end) in enumerate(tiling)
+% for q, (start, end) in enumerate(tiling):
 void
 ${funcn}_${q}(int i,
-              const ${dtype}* restrict b, int ldb,
-              ${dtype}* restrict c, int ldc)
+              __global const ${dtype}* restrict b, int ldb,
+              __global ${dtype}* restrict c, int ldc)
 {
     ${dtype} dotp;
 
@@ -30,8 +30,8 @@ ${funcn}_${q}(int i,
 
 __kernel void
 ${funcn}(int n,
-         const ${dtype}* restrict b, int ldb,
-         ${dtype}* restrict c, int ldc)
+         __global const ${dtype}* restrict b, int ldb,
+         __global ${dtype}* restrict c, int ldc)
 {
     int i = get_global_id(0);
 
