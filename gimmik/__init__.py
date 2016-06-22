@@ -27,8 +27,6 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm'):
 
     if platform == 'c-omp':
         tplargs['tilings'] = _tile(mat, sizes=[1, 2])
-    elif platform == 'opencl':
-        tplargs['tiling'] = _partition(mat, 1)
 
     # Load and render the template
     tpl = pkgutil.get_data(__name__, 'kernels/{0}.mako'.format(platform))

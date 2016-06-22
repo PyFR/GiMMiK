@@ -12,7 +12,7 @@ ${funcn}(int n,
     {
     % for j, jx in enumerate(mat):
         dotp = ${' + '.join('{kx}*b[i + {k}*ldb]'.format(k=k, kx=kx)
-                            for k, kx in enumerate(jx) if kx != 0)};
+                            for k, kx in enumerate(jx) if kx != 0) or 0};
     % if beta == 0:
         c[i + ${j}*ldc] = dotp;
     % elif beta == 1:
