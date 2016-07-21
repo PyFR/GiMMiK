@@ -30,33 +30,21 @@ to perform a system-wide install. Alternatively, run
 
 to install the package locally.
 
-If you desire to test whether GiMMiK works correctly on your system, you can do so by running:
-::
-
-    python setup.py test
-
-To execute the tests you will need these additional dependencies:
-
-* `CUDA <https://developer.nvidia.com/cuda-downloads>`_ + `pycuda >= 2011.2 <http://mathema.tician.de/software/pycuda/>`_
-* OpenCL + `pyopencl >= 2013.2 <http://mathema.tician.de/software/pyopencl/>`_
-
 How do I use GiMMiK?
 --------------------
 Once installed, you are ready to use GiMMiK.
 
 .. code:: python
 
-    import gimmik.generator as gen
-    from gimmik.platform import Platform
+    from gimmik import generate_mm
 
     ...
 
-    # Generate kernel
-    kernel = gen.generateKernel(data, alpha=2.0, beta=3.0, double=True, reduced=True,
-                                platform='opencl')
+    # Generate a CUDA kernel for C = 2*mat*B
+    src = generate_mm(mat, np.float32, platform='cuda', alpha=2.0, beta=0.0)
 
     ...
 
 Who uses GiMMiK?
 ----------------
-GiMMiK was develop to improve performance of the `PyFR <http://www.pyfr.org>`_ framework for solving advection-diffusion type problems in the area of CFD.
+GiMMiK was develop to improve performance of the `PyFR <http://www.pyfr.org>`_ framework.
