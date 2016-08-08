@@ -33,7 +33,7 @@ install_requires = [
 
 # Info
 classifiers = [
-    'License :: OSI Approved :: New BSD License',
+    'License :: OSI Approved :: BSD License',
     'Programming Language :: Python :: 3.3',
     'Topic :: Scientific/Engineering'
 ]
@@ -44,7 +44,7 @@ matrix multiplication kernels for various accelerator platforms.  For
 small operator matrices the generated kernels are capable of
 outperfoming the state-of-the-art general matrix multiplication
 routines such as cuBLAS GEMM or clBLAS GEMM.  GiMMiK was originally
-developed as part of  Bartosz Wozniak's master's thesis in the
+developed as part of Bartosz Wozniak's master's thesis in the
 Department of Computing at Imperial College London and is currently
 maintained by Freddie Witherden.'''
 
@@ -59,7 +59,8 @@ setup(name='gimmik',
       # Metadata
       description='Generator of Matrix Multiplication Kernels',
       long_description=long_description,
-      author='Imperial College London',
+      maintainer='Freddie Witherden',
+      maintainer_email='freddie@witherden.org',
       url='https://github.com/vincentlab/GiMMiK',
       license='BSD',
       keywords=['Matrix Multiplication', 'GPU', 'CUDA', 'OpenCL'],
