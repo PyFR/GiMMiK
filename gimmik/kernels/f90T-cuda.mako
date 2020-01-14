@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-attributes(global) function ${funcn}(n,b,c)
+attributes(global) subroutine ${funcn}(n,b,c)
     use cudafor
     implicit none	 
 
@@ -30,4 +30,4 @@ attributes(global) function ${funcn}(n,b,c)
     endif
     
     return
-end function ${funcn}
+end subroutine ${funcn}

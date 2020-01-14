@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-function ${funcn}(n,b,c)
+subroutine ${funcn}(n,b,c)
     implicit none	 
 
     integer(kind=4), intent(in) :: n
@@ -28,4 +28,4 @@ function ${funcn}(n,b,c)
     enddo
     
     return
-end function ${funcn}
+end subroutine ${funcn}
