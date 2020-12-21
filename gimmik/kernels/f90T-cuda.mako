@@ -8,7 +8,7 @@ attributes(global) subroutine ${funcn}(n,b,c)
 
     ${dtype}, device, intent(in) :: b(n,${len(mat[:,0])})
 
-    ${dtype}, device, intent(out) :: c(n,${len(mat[0,:])})
+    ${dtype}, device, intent(${'out' if beta == 0 else 'inout'}) :: c(n,${len(mat[0,:])})
 
     integer(kind=4) :: i
     ${dtype} :: dotp
@@ -16,9 +16,10 @@ attributes(global) subroutine ${funcn}(n,b,c)
     i = blockDim%x*(blockIdx%x - 1) + threadIdx%x
     
     if(i .le. n) then
-    % for j, jx in enumerate(mat.transpose(),start=1):
-        dotp = ${' + '.join('{kx}*b(i,{k})'.format(k=k, kx=kx)
-                            for k, kx in enumerate(jx, start=1) if kx != 0) or 0}
+    % for j, jx in enumerate(mat.T,start=1):
+        dotp = ${' + '.join(f'{kx}*b(i,{k})'
+                    for k, kx in enumerate(jx, start=1) if kx != 0) or 0}
+
     % if beta == 0:
         c(i,${j}) = dotp
     % elif beta == 1:
