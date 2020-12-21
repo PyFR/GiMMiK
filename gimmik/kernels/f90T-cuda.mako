@@ -6,9 +6,9 @@ attributes(global) subroutine ${funcn}(n,b,c)
 
     integer(kind=4), device, intent(in) :: n
 
-    ${dtype}, device, intent(in) :: b(${len(mat[:,0])},n)
+    ${dtype}, device, intent(in) :: b(n,${len(mat[:,0])})
 
-    ${dtype}, device, intent(out) :: c(${len(mat[0,:])},n)
+    ${dtype}, device, intent(out) :: c(n,${len(mat[0,:])})
 
     integer(kind=4) :: i
     ${dtype} :: dotp
@@ -17,14 +17,14 @@ attributes(global) subroutine ${funcn}(n,b,c)
     
     if(i .le. n) then
     % for j, jx in enumerate(mat.transpose(),start=1):
-        dotp = ${' + '.join('{kx}*b({k},i)'.format(k=k, kx=kx)
+        dotp = ${' + '.join('{kx}*b(i,{k})'.format(k=k, kx=kx)
                             for k, kx in enumerate(jx, start=1) if kx != 0) or 0}
     % if beta == 0:
-        c(${j},i) = dotp
+        c(i,${j}) = dotp
     % elif beta == 1:
-        c(${j},i) = c(${j},i) + dotp
+        c(i,${j}) = c(i,${j}) + dotp
     % else:
-        c(${j},i) = dotp + ${beta}*c(${j},i)
+        c(i,${j}) = dotp + ${beta}*c(i,${j})
     % endif
     % endfor
     endif
