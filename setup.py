@@ -22,10 +22,6 @@ else:
 
 # Modules
 modules = [
-    'gimmik.backends',
-    'gimmik.backends.base',
-    'gimmik.backends.cuda',
-    'gimmik.backends.openmp',
     'gimmik.test',
 ]
 
@@ -39,6 +35,7 @@ install_requires = [
     'appdirs >= 1.4.0',
     'mako >= 1.0.0',
     'numpy >= 1.20',
+    'pyfr >= 1.11',
     'pytools >= 2016.2.1'
 ]
 
@@ -63,7 +60,7 @@ setup(name='gimmik',
       version=version,
 
       # Packages
-      packages=['gimmik'],
+      packages=['gimmik'] + modules,
       package_data=package_data,
       install_requires=install_requires,
 

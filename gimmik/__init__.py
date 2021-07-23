@@ -7,7 +7,7 @@ from mako.template import Template
 import numpy as np
 
 from gimmik._version import __version__
-
+from gimmik.test import default_cfg, get_tester
 
 def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm'):
     # Data type
@@ -36,3 +36,9 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm'):
 
     # Return the source
     return src
+
+def profile_generated(mat, dtype, src, platform):
+    cfg = default_cfg(dtype)
+    tester = get_tester(platform, cfg)
+
+    return tester.mul_time(src, mat)

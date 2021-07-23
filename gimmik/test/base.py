@@ -15,13 +15,19 @@ class BaseTest(object):
     def mul_time_test(self):
         pass
 
-    def test_malloc(self, mat, n=1024):
+    def test_malloc(self, mat, n=8192):
         backend = self.backend
 
         (n1, n2) = np.shape(mat)
         n0 = n*backend.soasz
 
-        print(f'{n0=}, {n1=}, {n2=}')
+        xin_0 = np.random.rand(n2, n0)
 
-        self._xin = backend.matrix((n0, n2), tags={'align'})
-        self._xout = backend.matrix((n0, n1), tags={'align'})
+        self._xin = backend.matrix((n2, n0), initval=xin_0, tags={'align'})
+        self._xout = backend.matrix((n1, n0), tags={'align'})
+
+    def mul_time(self, src, mat, n_runs=100):
+        pass
+
+    def mul_validate(self, src, mat):
+        pass
