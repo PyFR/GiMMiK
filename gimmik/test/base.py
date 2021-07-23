@@ -15,7 +15,7 @@ class BaseTest(object):
     def mul_time_test(self):
         pass
 
-    def test_malloc(self, mat, n=8192):
+    def test_malloc(self, mat, n=4096):
         backend = self.backend
 
         (n1, n2) = np.shape(mat)

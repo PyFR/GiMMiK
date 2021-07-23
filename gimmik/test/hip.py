@@ -26,7 +26,7 @@ class HIPTest(BaseTest, HIPKernelProvider):
 
         return fun, block, grid
 
-    def mul_time(self, src, mat, n_runs=100):
+    def mul_time(self, src, mat, n_runs=30):
         self.test_malloc(mat)
 
         fun, block, grid = self._make_kernel(src, self._xin)

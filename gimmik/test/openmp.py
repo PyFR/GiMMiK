@@ -35,7 +35,7 @@ class OpenMPTest(BaseTest, OpenMPKernelProvider):
 
         return batch, ptr
 
-    def mul_time(self, src, mat, n_runs=100):
+    def mul_time(self, src, mat, n_runs=30):
         self.test_malloc(mat)
 
         batch, ptr = self._make_kernel(src)

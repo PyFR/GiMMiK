@@ -22,7 +22,7 @@ class OpenCLTest(BaseTest, OpenCLKernelProvider):
 
         return fun
 
-    def mul_time(self, src, mat, n_runs=100):
+    def mul_time(self, src, mat, n_runs=30):
         self.test_malloc(mat)
 
         fun = self._make_kernel(src, self._xin)
@@ -35,6 +35,7 @@ class OpenCLTest(BaseTest, OpenCLKernelProvider):
             fun(queue, (self._xin.ncol,), None, self._xin.ncol,
                 self._xin.data, self._xin.leaddim, self._xout.data, 
                 self._xout.leaddim)
+            queue.finish()
             end = time.time()
 
             run_times.append(end - start)
