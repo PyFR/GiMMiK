@@ -4,7 +4,6 @@ from gimmik.test.base import BaseTest
 import numpy as np
 from pyfr.backends.hip.provider import (HIPKernelProvider,
                                          get_grid_for_block)
-from statistics import geometric_mean, stdev
 import time
 
 

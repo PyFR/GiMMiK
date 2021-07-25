@@ -4,7 +4,6 @@ from ctypes import cast, c_void_p
 from gimmik.test.base import BaseTest
 import numpy as np
 from pyfr.backends.openmp.provider import (OpenMPKernelProvider)
-from statistics import geometric_mean, stdev
 import time
 
 

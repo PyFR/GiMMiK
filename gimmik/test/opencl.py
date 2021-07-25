@@ -4,7 +4,6 @@ from gimmik.test.base import BaseTest
 import numpy as np
 from pyfr.backends.opencl.provider import (OpenCLKernelProvider)
 import pyopencl as cl
-from statistics import geometric_mean, stdev
 import time
 
 
