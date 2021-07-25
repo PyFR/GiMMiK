@@ -32,11 +32,8 @@ package_data = {
 
 # Hard dependencies
 install_requires = [
-    'appdirs >= 1.4.0',
     'mako >= 1.0.0',
-    'numpy >= 1.20',
-    'pyfr >= 1.11',
-    'pytools >= 2016.2.1'
+    'numpy >= 1.7',
 ]
 
 # Info

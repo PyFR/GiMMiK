@@ -15,15 +15,12 @@ def get_tester(name, cfg):
     return subclass_where(BaseTest, name=name.lower())(name, cfg)
 
 def default_cfg(dtype):
-    if dtype == np.float32:
-        dtype = 'single'
-    elif dtype == np.float64:
-        dtype = 'double'
-    else:
-        raise ValueError('Invalid floating point data type')
+    precision = {np.float32: 'single',
+                 np.float64: 'double',
+                }
 
     cfg_str = f'''
         [backend]
-        precision = {dtype}
+        precision = {precision[dtype]}
     '''
     return Inifile(cfg_str)

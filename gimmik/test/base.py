@@ -34,18 +34,10 @@ class BaseTest(object):
         pass
 
     def profile_stats(self, run_time, mat, dtype):
-        if dtype == np.float32:
-            dbytes = 4
-        elif dtype == np.float64:
-            dbytes = 8
-        else:
-            raise ValueError('Invalid floating point data type')
-
         g_mean = geometric_mean(run_time)
         std_dev = stdev(run_time)
 
-        memory_io = dbytes*(self._xin.nrow*self._xin.ncol + 
-                            self._xout.nrow*self._xout.ncol)
+        memory_io = self._xin.nbytes + self._xout.nbytes
         bandwidth = memory_io/g_mean
         flops = self._xin.nrow*np.count_nonzero(mat)/g_mean
 
