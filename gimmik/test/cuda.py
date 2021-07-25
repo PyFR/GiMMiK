@@ -4,7 +4,6 @@ from gimmik.test.base import BaseTest
 import numpy as np
 from pyfr.backends.cuda.provider import (CUDAKernelProvider,
                                          get_grid_for_block)
-from statistics import geometric_mean, stdev
 import time
 
 
@@ -15,18 +14,18 @@ class CUDATest(BaseTest, CUDAKernelProvider):
         BaseTest.__init__(self, platform, cfg)
         CUDAKernelProvider.__init__(self, self.backend)
 
-    def _make_kernel(self, src, b):
+    def _make_kernel(self, src, b, block_dim=128):
         # Build
         fun = self._build_kernel('gimmik_mm', src,
                                  [np.int32, np.intp]*2 + [np.int32])
 
         # Determine the grid/block
-        block = (128, 1, 1)
+        block = (block_dim, 1, 1)
         grid = get_grid_for_block(block, b.ncol)
 
         return fun, block, grid
 
-    def mul_time(self, src, mat, n_runs=30):
+    def mul_profile(self, src, mat, dtype, n_runs=30):
         self.test_malloc(mat)
 
         fun, block, grid = self._make_kernel(src, self._xin)
@@ -40,7 +39,6 @@ class CUDATest(BaseTest, CUDAKernelProvider):
                 self._xin.leaddim, self._xout, self._xout.leaddim)
             stream_comp.synchronize()
             end = time.time()
-
             run_times.append(end - start)
-        
-        return geometric_mean(run_times), stdev(run_times)
+
+        return self.profile_stats(run_times, mat, dtype)

@@ -35,7 +35,7 @@ class OpenMPTest(BaseTest, OpenMPKernelProvider):
 
         return batch, ptr
 
-    def mul_time(self, src, mat, n_runs=30):
+    def mul_profile(self, src, mat, dtype, n_runs=30):
         self.test_malloc(mat)
 
         batch, ptr = self._make_kernel(src)
@@ -49,4 +49,4 @@ class OpenMPTest(BaseTest, OpenMPKernelProvider):
 
             run_times.append(end - start)
         
-        return geometric_mean(run_times), stdev(run_times)
+        return self.profile_stats(run_times, mat, dtype)

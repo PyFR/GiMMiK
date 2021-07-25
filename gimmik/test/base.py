@@ -2,6 +2,7 @@
 
 import numpy as np
 from pyfr.backends import get_backend
+from statistics import geometric_mean, stdev
 
 
 class BaseTest(object):
@@ -26,8 +27,29 @@ class BaseTest(object):
         self._xin = backend.matrix((n2, n0), initval=xin_0, tags={'align'})
         self._xout = backend.matrix((n1, n0), tags={'align'})
 
-    def mul_time(self, src, mat, n_runs=100):
+    def mul_profile(self, src, mat, dtype, n_runs=100):
         pass
 
     def mul_validate(self, src, mat):
         pass
+
+    def profile_stats(self, run_time, mat, dtype):
+        if dtype == np.float32:
+            dbytes = 4
+        elif dtype == np.float64:
+            dbytes = 8
+        else:
+            raise ValueError('Invalid floating point data type')
+
+        g_mean = geometric_mean(run_time)
+        std_dev = stdev(run_time)
+
+        memory_io = dbytes*(self._xin.nrow*self._xin.ncol + 
+                            self._xout.nrow*self._xout.ncol)
+        bandwidth = memory_io/g_mean
+        flops = self._xin.nrow*np.count_nonzero(mat)/g_mean
+
+        stats = {'runtime': g_mean, 'stdev': std_dev, 'bandwidth': bandwidth,
+                 'flops': flops,
+                }
+        return stats

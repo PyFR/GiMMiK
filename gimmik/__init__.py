@@ -41,4 +41,4 @@ def profile_generated(mat, dtype, src, platform):
     cfg = default_cfg(dtype)
     tester = get_tester(platform, cfg)
 
-    return tester.mul_time(src, mat)
+    return tester.mul_profile(src, mat, dtype)
