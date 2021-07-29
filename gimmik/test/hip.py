@@ -4,42 +4,38 @@ from gimmik.test.base import BaseTest
 import numpy as np
 from pyfr.backends.hip.provider import (HIPKernelProvider,
                                          get_grid_for_block)
-import time
 
 
-class HIPTest(BaseTest, HIPKernelProvider):
+class HIPTest(BaseTest):
     name = 'hip'
 
     def __init__(self, platform, cfg):
-        BaseTest.__init__(self, platform, cfg)
-        HIPKernelProvider.__init__(self, self.backend)
+        super(HIPTest, self).__init__(platform, cfg)
+        self.provider = HIPKernelProvider(self.backend)
 
-    def _make_kernel(self, src, b, block_dim=128):
+    def _make_kernel_prof(self, src, b, out, stream):
         # Build
-        fun = self._build_kernel('gimmik_mm', src,
+        fun = self.provider._build_kernel('gimmik_mm', src,
                                  [np.int32, np.intp]*2 + [np.int32])
 
         # Determine the grid/block
+        block_dim = self.cfg.getint('gimmik-profile', 'block_dim', 128)
         block = (block_dim, 1, 1)
         grid = get_grid_for_block(block, b.ncol)
 
-        return fun, block, grid
+        class GimmikKernel(object):
+            def run_sync(self):
+                fun.exec_async(grid, block, stream, b.ncol, b, b.leaddim, out,
+                               out.leaddim)
+                stream.synchronize()
 
-    def mul_profile(self, src, mat, dtype, n_runs=30):
+        return GimmikKernel()
+
+    def mul_profile(self, src, mat):
         self.test_malloc(mat)
 
-        fun, block, grid = self._make_kernel(src, self._xin)
+        self.stream = self.backend.hip.create_stream()
+        kernel = self._make_kernel_prof(src, self._xin, self._xout,
+                                        self.stream)
         
-        stream_comp = self.backend.hip.create_stream()
-        
-        run_times = []
-        for i in range(n_runs):
-            start = time.time()
-            fun.exec_async(grid, block, stream_comp, self._xin.ncol, self._xin,
-                self._xin.leaddim, self._xout, self._xout.leaddim)
-            stream_comp.synchronize()
-            end = time.time()
-
-            run_times.append(end - start)
-        
-        return self.profile_stats(run_times, mat, dtype)
+        return self.profile_kernel(kernel, mat)

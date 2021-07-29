@@ -4,19 +4,18 @@ from ctypes import cast, c_void_p
 from gimmik.test.base import BaseTest
 import numpy as np
 from pyfr.backends.openmp.provider import (OpenMPKernelProvider)
-import time
 
 
-class OpenMPTest(BaseTest, OpenMPKernelProvider):
+class OpenMPTest(BaseTest):
     name = 'openmp'
 
     def __init__(self, platform, cfg):
-        BaseTest.__init__(self, platform, cfg)
-        OpenMPKernelProvider.__init__(self, self.backend)
+        super(OpenMPTest, self).__init__(platform, cfg)
+        self.provider = OpenMPKernelProvider(self.backend)
 
-    def _make_kernel(self, src):
+    def _make_kernel_prof(self, src, b, out):
         # Build
-        fun = self._build_kernel('gimmik_mm', src,
+        fun = self.provider._build_kernel('gimmik_mm', src,
                                  [np.int32, np.intp]*2 + [np.int32])
 
         ptr = cast(fun, c_void_p).value
@@ -30,22 +29,18 @@ class OpenMPTest(BaseTest, OpenMPKernelProvider):
         argt = [np.intp] + [np.int32]*2 + [np.intp, np.int32]*2
 
         # Build
-        batch = self._build_kernel('batch_gemm', src, argt)
+        batch = self.provider._build_kernel('batch_gemm', src, argt)
 
-        return batch, ptr
+        class GimmikKernel(object):
+            def run_sync(self):
+                batch(ptr, b.leaddim, b.nblocks, b, b.blocksz, out,
+                      out.blocksz)
 
-    def mul_profile(self, src, mat, dtype, n_runs=30):
+        return GimmikKernel()
+
+    def mul_profile(self, src, mat):
         self.test_malloc(mat)
 
-        batch, ptr = self._make_kernel(src)
-                
-        run_times = []
-        for i in range(n_runs):
-            start = time.time()
-            batch(ptr, self._xin.leaddim, self._xin.nblocks, self._xin, 
-                self._xin.blocksz, self._xout, self._xout.blocksz)
-            end = time.time()
+        kernel = self._make_kernel_prof(src, self._xin, self._xout)
 
-            run_times.append(end - start)
-        
-        return self.profile_stats(run_times, mat, dtype)
+        return self.profile_kernel(kernel, mat)

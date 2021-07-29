@@ -3,6 +3,7 @@
 import numpy as np
 from pyfr.backends import get_backend
 from statistics import geometric_mean, stdev
+import time
 
 
 class BaseTest(object):
@@ -33,7 +34,19 @@ class BaseTest(object):
     def mul_validate(self, src, mat):
         pass
 
-    def profile_stats(self, run_time, mat, dtype):
+    def profile_kernel(self, kernel, mat):
+        n_runs = self.cfg.getint('gimmik-profile', 'n_runs', 30)
+
+        run_times = []
+        for i in range(n_runs):
+            start = time.time()
+            kernel.run_sync()
+            end = time.time()
+            run_times.append(end - start)
+
+        return self.profile_stats(run_times, mat)
+
+    def profile_stats(self, run_time, mat):
         g_mean = geometric_mean(run_time)
         std_dev = stdev(run_time)
 

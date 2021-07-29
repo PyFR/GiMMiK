@@ -4,39 +4,32 @@ from gimmik.test.base import BaseTest
 import numpy as np
 from pyfr.backends.opencl.provider import (OpenCLKernelProvider)
 import pyopencl as cl
-import time
 
 
-class OpenCLTest(BaseTest, OpenCLKernelProvider):
+class OpenCLTest(BaseTest):
     name = 'opencl'
 
     def __init__(self, platform, cfg):
-        BaseTest.__init__(self, platform, cfg)
-        OpenCLKernelProvider.__init__(self, self.backend)
+        super(OpenCLTest, self).__init__(platform, cfg)
+        self.provider = OpenCLKernelProvider(self.backend)
 
-    def _make_kernel(self, src, b):
+    def _make_kernel_prof(self, src, b, out, queue):
         # Build
-        fun = self._build_kernel('gimmik_mm', src,
+        fun = self.provider._build_kernel('gimmik_mm', src,
                                  [np.int32, np.intp]*2 + [np.int32])
 
-        return fun
+        class GimmikKernel(object):
+            def run_sync(self):
+                fun(queue, (b.ncol,), None, b.ncol, b.data, b.leaddim,
+                    out.data, out.leaddim)
+                queue.finish()
 
-    def mul_profile(self, src, mat, dtype, n_runs=30):
+        return GimmikKernel()
+
+    def mul_profile(self, src, mat):
         self.test_malloc(mat)
-
-        fun = self._make_kernel(src, self._xin)
         
-        queue = cl.CommandQueue(self.backend.ctx)
+        self.queue = cl.CommandQueue(self.backend.ctx)
+        kernel = self._make_kernel_prof(src, self._xin, self._xout, self.queue)
         
-        run_times = []
-        for i in range(n_runs):
-            start = time.time()
-            fun(queue, (self._xin.ncol,), None, self._xin.ncol,
-                self._xin.data, self._xin.leaddim, self._xout.data, 
-                self._xout.leaddim)
-            queue.finish()
-            end = time.time()
-
-            run_times.append(end - start)
-        
-        return self.profile_stats(run_times, mat, dtype)
+        return self.profile_kernel(kernel, mat)
