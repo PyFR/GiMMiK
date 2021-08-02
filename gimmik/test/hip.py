@@ -49,7 +49,7 @@ class HIPTest(BaseTest):
         class QueueWrapper(object):
             def __init__(iself, stream):
                 iself.stream_comp = stream
-        queue = QueueWrapper(self.stream_crocblas)
+        queue = QueueWrapper(self.stream_rocblas)
 
         class GimmikKernel(object):
             def run_sync(iself):
