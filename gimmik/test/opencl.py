@@ -27,9 +27,10 @@ class OpenCLTest(BaseTest):
         return GimmikKernel()
 
     def mul_profile(self, src, mat):
-        self.test_malloc(mat)
+        self.prof_malloc(mat)
         
         self.queue = cl.CommandQueue(self.backend.ctx)
-        kernel = self._make_kernel_prof(src, self._xin, self._xout, self.queue)
+        kernel = self._make_kernel_prof(src, self._x['in'], self._x['out'],
+                                        self.queue)
         
-        return self.profile_kernel(kernel, mat)
+        return self.profile_kernel(kernel, mat, self._x['in'], self._x['out'])

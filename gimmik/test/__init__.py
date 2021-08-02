@@ -14,7 +14,7 @@ from pyfr.util import subclass_where
 def get_tester(name, cfg):
     return subclass_where(BaseTest, name=name.lower())(name, cfg)
 
-def default_cfg(dtype, n_runs=30, block_dim=128):
+def default_cfg(dtype, n_runs=30, block_dim=128, neles=4096):
     precision = {np.float32: 'single',
                  np.float64: 'double',
                 }
@@ -25,5 +25,6 @@ def default_cfg(dtype, n_runs=30, block_dim=128):
         [gimmik-profile]
         {n_runs=}
         {block_dim=}
+        {neles=}
     '''
     return Inifile(cfg_str)

@@ -42,3 +42,15 @@ def profile_generated(mat, dtype, src, platform):
     tester = get_tester(platform, cfg)
 
     return tester.mul_profile(src, mat)
+
+def profile_cublas(mat, dtype, alpha=1., beta=0.):
+    cfg = default_cfg(dtype)
+
+    tester = get_tester('cuda', cfg)
+    return tester.mul_cublas_profile(mat, alpha, beta)
+
+def profile_rocblas(mat, dtype, alpha=1., beta=0.):
+    cfg = default_cfg(dtype)
+
+    tester = get_tester('hip', cfg)
+    return tester.mul_rocblas_profile(mat, alpha, beta)

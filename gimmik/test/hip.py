@@ -2,6 +2,7 @@
 
 from gimmik.test.base import BaseTest
 import numpy as np
+from pyfr.backends.hip.rocblas import HIPRocBLASKernels
 from pyfr.backends.hip.provider import (HIPKernelProvider,
                                          get_grid_for_block)
 
@@ -31,11 +32,38 @@ class HIPTest(BaseTest):
 
         return GimmikKernel()
 
+    def mul_rocblas_profile(self, mat, alpha=1.0, beta=0.0):
+        (n1, n2) = np.shape(mat)
+        A = self.malloc(n2, n1, x0=mat)
+
+        self.single_malloc(1, n2, name='rocblas', rinit=True)
+        if 'out' not in self._x:
+            self.single_malloc(1, n1, name='out')
+
+        cublas = HIPRocBLASKernels(self.backend)
+        async_kernel = cublas.mul(A, self._x['rocblas'], self._x['out'],
+                                  alpha, beta)
+
+        self.stream_rocblas = self.backend.hip.create_stream()
+
+        class QueueWrapper(object):
+            def __init__(iself, stream):
+                iself.stream_comp = stream
+        queue = QueueWrapper(self.stream_crocblas)
+
+        class GimmikKernel(object):
+            def run_sync(iself):
+                async_kernel.run(queue)
+                self.stream_rocblas.synchronize()
+
+        return self.profile_kernel(GimmikKernel(), mat, self._x['rocblas'],
+                                   self._x['out'])
+
     def mul_profile(self, src, mat):
-        self.test_malloc(mat)
+        self.prof_malloc(mat)
 
         self.stream = self.backend.hip.create_stream()
-        kernel = self._make_kernel_prof(src, self._xin, self._xout,
+        kernel = self._make_kernel_prof(src, self._x['in'], self._x['out'],
                                         self.stream)
         
-        return self.profile_kernel(kernel, mat)
+        return self.profile_kernel(kernel, mat, self._x['in'], self._x['out'])
