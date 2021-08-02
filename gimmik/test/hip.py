@@ -15,14 +15,21 @@ class HIPTest(BaseTest):
         self.provider = HIPKernelProvider(self.backend)
 
     def _make_kernel_prof(self, src, b, out, stream):
-        # Build
-        fun = self.provider._build_kernel('gimmik_mm', src,
-                                 [np.int32, np.intp]*2 + [np.int32])
-
         # Determine the grid/block
         block_dim = self.cfg.getint('gimmik-profile', 'block_dim', 128)
         block = (block_dim, 1, 1)
         grid = get_grid_for_block(block, b.ncol)
+
+        # CUDA -> HIP find and replace
+        src = src.replace('__global__ void',
+                          f'__launch_bounds__({block[0]}) __global__ void')
+        src = src.replace('blockDim.x', 'hipBlockDim_x')
+        src = src.replace('blockIdx.x', 'hipBlockIdx_x')
+        src = src.replace('threadIdx.x', 'hipThreadIdx_x')
+
+        # Build
+        fun = self.provider._build_kernel('gimmik_mm', src,
+                                 [np.int32, np.intp]*2 + [np.int32])
 
         class GimmikKernel(object):
             def run_sync(self):
@@ -40,8 +47,8 @@ class HIPTest(BaseTest):
         if 'out' not in self._x:
             self.single_malloc(1, n1, name='out')
 
-        cublas = HIPRocBLASKernels(self.backend)
-        async_kernel = cublas.mul(A, self._x['rocblas'], self._x['out'],
+        rocblas = HIPRocBLASKernels(self.backend)
+        async_kernel = rocblas.mul(A, self._x['rocblas'], self._x['out'],
                                   alpha, beta)
 
         self.stream_rocblas = self.backend.hip.create_stream()
@@ -54,6 +61,12 @@ class HIPTest(BaseTest):
         class GimmikKernel(object):
             def run_sync(iself):
                 async_kernel.run(queue)
+                self.stream_rocblas.synchronize()
+
+            def run_async(iself):
+                async_kernel.run(queue)
+            
+            def sync(iself):
                 self.stream_rocblas.synchronize()
 
         return self.profile_kernel(GimmikKernel(), mat, self._x['rocblas'],

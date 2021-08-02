@@ -32,9 +32,18 @@ class OpenMPTest(BaseTest):
         batch = self.provider._build_kernel('batch_gemm', src, argt)
 
         class GimmikKernel(object):
-            def run_sync(self):
+            def run(self):
                 batch(ptr, b.leaddim, b.nblocks, b, b.blocksz, out,
                       out.blocksz)
+
+            def run_sync(self):
+                self.run()
+
+            def run_async(self):
+                self.run()
+
+            def sync(self):
+                pass
 
         return GimmikKernel()
 

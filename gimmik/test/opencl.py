@@ -24,6 +24,13 @@ class OpenCLTest(BaseTest):
                     out.data, out.leaddim)
                 queue.finish()
 
+            def run_async(self):
+                fun(queue, (b.ncol,), None, b.ncol, b.data, b.leaddim,
+                    out.data, out.leaddim)
+                
+            def sync(self):
+                queue.finish()
+
         return GimmikKernel()
 
     def mul_profile(self, src, mat):

@@ -37,8 +37,8 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm'):
     # Return the source
     return src
 
-def profile_generated(mat, dtype, src, platform):
-    cfg = default_cfg(dtype)
+def profile_generated(mat, dtype, src, platform, **kwargs):
+    cfg = default_cfg(dtype, **kwargs)
     tester = get_tester(platform, cfg)
 
     return tester.mul_profile(src, mat)
@@ -54,3 +54,23 @@ def profile_rocblas(mat, dtype, alpha=1., beta=0.):
 
     tester = get_tester('hip', cfg)
     return tester.mul_rocblas_profile(mat, alpha, beta)
+
+def optimise_block_dim(mat, dtype, src, platform, max_size=1024):
+    if platform not in ['cuda', 'hip']:
+        raise ValueError('Invalid platform for block size optimisation')
+    
+    cfg = default_cfg(dtype)
+    tester = get_tester(platform, cfg)
+    soasz = tester.backend.soasz
+
+    runtime = []
+    for i in range(1, int(max_size/soasz)):
+        threads = i*soasz
+
+        tester.cfg.set('gimmik-profile', 'block_dim', threads)
+        runtime.append(tester.mul_profile(src, mat)['runtime'])
+
+    return (runtime.index(min(runtime)) + 1)*soasz
+
+
+

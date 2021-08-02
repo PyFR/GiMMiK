@@ -30,6 +30,13 @@ class CUDATest(BaseTest):
                                out.leaddim)
                 stream.synchronize()
 
+            def run_async(iself):
+                fun.exec_async(grid, block, stream, b.ncol, b, b.leaddim, out,
+                               out.leaddim)
+
+            def sync(iself):
+                stream.synchronize()
+
         return GimmikKernel()
 
     def mul_cublas_profile(self, mat, alpha=1.0, beta=0.0):
@@ -54,6 +61,13 @@ class CUDATest(BaseTest):
         class GimmikKernel(object):
             def run_sync(iself):
                 async_kernel.run(queue)
+                self.stream_cublas.synchronize()
+
+            def run_async(iself):
+                async_kernel.run(queue)
+                self.stream_cublas.synchronize()
+
+            def sync(iself):
                 self.stream_cublas.synchronize()
 
         return self.profile_kernel(GimmikKernel(), mat, self._x['cublas'],

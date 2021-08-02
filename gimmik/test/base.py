@@ -59,19 +59,28 @@ class BaseTest(object):
 
     def profile_kernel(self, kernel, mat, b, out):
         n_runs = self.cfg.getint('gimmik-profile', 'n_runs', 30)
+        sync = self.cfg.getbool('gimmik-profile', 'sync', False)
 
         run_times = []
-        for i in range(n_runs):
+        if sync:
+            for i in range(n_runs):
+                start = time.time()
+                kernel.run_sync()
+                end = time.time()
+                run_times.append(end - start)
+        else:
             start = time.time()
-            kernel.run_sync()
+            for i in range(n_runs):
+                kernel.run_async()
+            kernel.sync()
             end = time.time()
-            run_times.append(end - start)
+            run_times.append((end - start)/n_runs)
 
         return self.profile_stats(run_times, mat, b, out)
 
     def profile_stats(self, run_time, mat, b, out):
         g_mean = geometric_mean(run_time)
-        std_dev = stdev(run_time)
+        std_dev = stdev(run_time) if len(run_time) > 1 else 0
 
         memory_io = b.nbytes + out.nbytes
         bandwidth = memory_io/g_mean
