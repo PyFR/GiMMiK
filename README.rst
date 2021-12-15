@@ -1,12 +1,12 @@
 GiMMiK
 ======
-Generator of Matrix Multiplication Kernels - GiMMiK - is a tool for generation of high performance matrix multiplication kernel code for various accelerator platforms. Currently CUDA and OpenCL are the only supported platforms.
+Generator of Matrix Multiplication Kernels - GiMMiK - is a tool for generation of high performance matrix multiplication kernel code for various accelerator platforms. Currently C, CUDA, ISPC, HIP and OpenCL are supported.
 
 What does GiMMiK do?
 --------------------
 Consider matrix multiplication of the form
 
-C = α ∙ A ⨉ B + β ∙ C
+C = α∙A×B + β∙C
 
 GiMMiK generates fully unrolled kernels, highly specialised to a given operator matrix. The generated code is fully unrolled - each kernel computes a single column of the output matrix. GiMMiK was designed to perform well in a Block by Panel type of matrix multiplication where the operator matrix is small. GiMMiK also removes any sparsity form the operator matrix as well as attempts to reduce common sub-expressions.
 
