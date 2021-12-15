@@ -26,7 +26,7 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm'):
     tplargs = {'dtype': dtype, 'mat': mat, 'beta': beta, 'funcn': funcn}
 
     # Load and render the template
-    tpl = pkgutil.get_data(__name__, 'kernels/{0}.mako'.format(platform))
+    tpl = pkgutil.get_data(__name__, f'kernels/{platform}.mako')
     src = Template(tpl).render(**tplargs)
 
     # At single precision suffix all floating point constants by 'f'

@@ -1,17 +1,11 @@
 # -*- coding: utf-8 -*-
 
-% if dtype == 'double':
-#if __OPENCL_VERSION__ < 120
-# pragma OPENCL EXTENSION cl_khr_fp64: enable
-#endif
-% endif
-
-__kernel void
+__global__ __launch_bounds__(128) void
 ${funcn}(int n,
-         __global const ${dtype}* restrict b, int ldb,
-         __global ${dtype}* restrict c, int ldc)
+         const ${dtype}* __restrict__ b, int ldb,
+         ${dtype}* __restrict__ c, int ldc)
 {
-    int i = get_global_id(0);
+    int i = blockDim.x*blockIdx.x + threadIdx.x;
     ${dtype} dotp;
 
     if (i < n)

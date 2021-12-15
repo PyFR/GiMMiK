@@ -7,8 +7,8 @@ import sys
 
 
 # Python version
-if sys.version_info[:2] < (3, 3):
-    print('GiMMiK requires Python 3.3 or newer')
+if sys.version_info[:2] < (3, 8):
+    print('GiMMiK requires Python 3.8 or newer')
     sys.exit(-1)
 
 # GiMMiK version
@@ -34,7 +34,7 @@ install_requires = [
 # Info
 classifiers = [
     'License :: OSI Approved :: BSD License',
-    'Programming Language :: Python :: 3.3',
+    'Programming Language :: Python :: 3.8',
     'Topic :: Scientific/Engineering'
 ]
 
