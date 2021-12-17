@@ -34,5 +34,9 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm'):
         src = re.sub(r'(?=\d*[.eE])(?=\.?\d)\d*\.?\d*(?:[eE][+-]?\d+)?',
                      r'\g<0>f', src)
 
+    # Cleanup
+    src = re.sub(r'\n\n+', r'\n\n', src.strip()) + '\n'
+    src = re.sub(r'\w+$', '', src)
+
     # Return the source
     return src
