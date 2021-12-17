@@ -1,10 +1,18 @@
 # -*- coding: utf-8 -*-
 
 __global__ __launch_bounds__(128) void
+% if n is None:
 ${funcn}(int n,
          const ${dtype}* __restrict__ b, int ldb,
          ${dtype}* __restrict__ c, int ldc)
 {
+% else:
+${funcn}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
+{
+    const int n = ${n};
+    const int ldb = ${ldb};
+    const int ldc = ${ldc};
+% endif
     int i = blockDim.x*blockIdx.x + threadIdx.x;
     ${dtype} dotp;
 
