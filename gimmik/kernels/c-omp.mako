@@ -1,14 +1,22 @@
 # -*- coding: utf-8 -*-
 
 void
-${funcn}(int ncol,
+% if n is None:
+${funcn}(int n,
          const ${dtype}* restrict b, int ldb,
          ${dtype}* restrict c, int ldc)
 {
+% else:
+${funcn}(const ${dtype}* restrict b, ${dtype}* restrict c)
+{
+    const int n = ${n};
+    const int ldb = ${ldb};
+    const int ldc = ${ldc};
+% endif
     ${dtype} dotp;
 
     #pragma omp parallel for simd private(dotp)
-    for (int i = 0; i < ncol; i++)
+    for (int i = 0; i < n; i++)
     {
     % for j, jx in enumerate(mat):
         dotp = ${' + '.join(f'{kx}*b[i + {k}*ldb]'

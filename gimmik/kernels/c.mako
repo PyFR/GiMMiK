@@ -1,10 +1,18 @@
 # -*- coding: utf-8 -*-
 
 void
+% if n is None:
 ${funcn}(int n,
          const ${dtype}* restrict b, int ldb,
          ${dtype}* restrict c, int ldc)
 {
+% else:
+${funcn}(const ${dtype}* restrict b, ${dtype}* restrict c)
+{
+    const int n = ${n};
+    const int ldb = ${ldb};
+    const int ldc = ${ldc};
+% endif
     ${dtype} dotp;
 
     #pragma omp simd

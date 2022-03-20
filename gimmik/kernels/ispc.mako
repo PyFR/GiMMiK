@@ -1,10 +1,18 @@
 # -*- coding: utf-8 -*-
 
 export void
+% if n is None:
 ${funcn}(uniform int n,
          const uniform ${dtype} b[], uniform int ldb,
          ${dtype} uniform c[], uniform int ldc)
 {
+% else:
+${funcn}(const uniform ${dtype} b[], ${dtype} uniform c[])
+{
+    const uniform int n = ${n};
+    const uniform int ldb = ${ldb};
+    const uniform int ldc = ${ldc};
+% endif
     ${dtype} dotp;
 
     foreach (i = 0 ... n)

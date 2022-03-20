@@ -7,10 +7,18 @@
 % endif
 
 __kernel void
+% if n is None:
 ${funcn}(int n,
          __global const ${dtype}* restrict b, int ldb,
          __global ${dtype}* restrict c, int ldc)
 {
+% else:
+${funcn}(__global const ${dtype}* restrict b, __global ${dtype}* restrict c)
+{
+    const int n = ${n};
+    const int ldb = ${ldb};
+    const int ldc = ${ldc};
+% endif
     int i = get_global_id(0);
     ${dtype} dotp;
 
