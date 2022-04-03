@@ -7,8 +7,8 @@ import sys
 
 
 # Python version
-if sys.version_info[:2] < (3, 8):
-    print('GiMMiK requires Python 3.8 or newer')
+if sys.version_info[:2] < (3, 9):
+    print('GiMMiK requires Python 3.9 or newer')
     sys.exit(-1)
 
 # GiMMiK version
@@ -22,7 +22,7 @@ else:
 
 # Data
 package_data = {
-    'gimmik': ['kernels/*.mako'],
+    'gimmik': ['kernels/*/*.mako'],
 }
 
 # Hard dependencies
