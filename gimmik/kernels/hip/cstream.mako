@@ -32,12 +32,11 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         dotp = make_zero();
   % endif
   % if beta == 0:
-        c[i + ${j}*ldc] = ${dot(lambda kx: f'b[i + {kx}*ldb]', jx, maxsplit=ksplit)};
+        c[i + ${j}*ldc] = dotp;
   % elif beta == 1 and dotex != '0.0':
-        c[i + ${j}*ldc] += ${dot(lambda kx: f'b[i + {kx}*ldb]', jx, maxsplit=ksplit)};
+        c[i + ${j}*ldc] += dotp;
   % else:
-        c[i + ${j}*ldc] = ${dot(lambda kx: f'b[i + {kx}*ldb]', jx, maxsplit=ksplit)}
-                        + ${beta}*c[i + ${j}*ldc];
+        c[i + ${j}*ldc] = dotp + ${beta}*c[i + ${j}*ldc];
   % endif
 % endfor
     }
