@@ -75,7 +75,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
       % endif
     % endfor
         __barrier_sync(0);
-    }
   % endfor
+    }
 % endfor
 }
