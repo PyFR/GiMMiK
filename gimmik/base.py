@@ -113,19 +113,28 @@ class MatMul:
         }
 
         # Incrementally generate and render the kernels
-        for name, exargs, exmeta in self._kernel_generators(dtype, dsize):
-            # Merge in the base arguments and metadata
-            args = baseargs | exargs
-            meta = basemeta | exmeta
+        gen = self._kernel_generators(dtype, dsize, **kwargs)
+        try:
+            resp = None
+            while True:
+                # Generate the next kernel in the sequence
+                name, exargs, exmeta = gen.send(resp)
 
-            # Render the kernel template
-            src = self._render_kernel(dtype, name, args)
+                # Merge in the base arguments and metadata
+                args = baseargs | exargs
+                meta = basemeta | exmeta
 
-            # Post-process the metadata
-            meta['tplname'] = name
-            self._process_meta(meta)
+                # Render the kernel template
+                src = self._render_kernel(dtype, name, args)
 
-            yield (src, meta)
+                # Post-process the metadata
+                meta['tplname'] = name
+                self._process_meta(meta)
+
+                # Yield the source and metadata and await a response
+                resp = yield (src, meta)
+        except StopIteration:
+            pass
 
     def _process_meta(self, meta):
         pass

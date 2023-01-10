@@ -7,7 +7,9 @@ class OpenCLMatMul(MatMul):
     platform = 'opencl'
     basemeta = {'local_work_size': None, 'local_mem_size': 0, 'width': 1}
 
-    def _kernel_generators(self, dtype, dsize):
+    def _kernel_generators(self, dtype, dsize, *, local_mem_size=None):
+        max_local_mem = local_mem_size or 1024**3
+
         # B loading, C streaming kernel
         yield ('cstream', {}, {})
 
@@ -19,14 +21,16 @@ class OpenCLMatMul(MatMul):
         args = {'msplit': ms, 'blockx': blkx, 'bsz': bsz}
         meta = {'local_work_size': (blkx, ms),
                 'local_mem_size': 2*blkx*bsz*dsize}
-        yield ('bstream-msplit', args, meta)
+        if meta['local_mem_size'] < max_local_mem:
+            yield ('bstream-msplit', args, meta)
 
         # Two-way k-split B loading, C streaming kernel
         ks, csz, blkx = 2, 32, 64
         args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
         meta = {'local_work_size': (blkx, ks),
                 'local_mem_size': (ks - 1)*csz*blkx*dsize}
-        yield ('cstream-ksplit', args, meta)
+        if meta['local_mem_size'] < max_local_mem:
+            yield ('cstream-ksplit', args, meta)
 
         # At single precision also consider vectorized kernels
         if (dtype == 'float' and
@@ -42,7 +46,8 @@ class OpenCLMatMul(MatMul):
                     'blockx': blkx, 'bsz': bsz}
             meta = {'local_work_size': (blkx, ms),
                     'local_mem_size': 2*blkx*bsz*dsize, 'width': 2}
-            yield ('bstream-msplit', args, meta)
+            if meta['local_mem_size'] < max_local_mem:
+                yield ('bstream-msplit', args, meta)
 
     def _process_meta(self, meta):
         if self.n is not None:
