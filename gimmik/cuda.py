@@ -8,7 +8,7 @@ class CUDAMatMul(MatMul):
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0,
                 'dynamic_shared': 0}
 
-    def _kernel_generators(self, dtype, dsize):
+    def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
         # B loading, C streaming kernel
         yield ('cstream', {}, {})
 
