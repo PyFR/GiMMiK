@@ -7,7 +7,7 @@ class HIPMatMul(MatMul):
     platform = 'hip'
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0}
 
-    def _kernel_generators(self, dtype, dsize):
+    def _kernel_generators(self, dtype, dsize, *, gcn_arch=None, warp_size=64):
         # B loading, C streaming kernel
         yield ('cstream', {}, {})
 
