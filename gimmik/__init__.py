@@ -6,6 +6,7 @@ from gimmik.copenmp import COpenMPMatMul
 from gimmik.cuda import CUDAMatMul
 from gimmik.ispc import ISPCMatMul
 from gimmik.hip import HIPMatMul
+from gimmik.metal import MetalMatMul
 from gimmik.opencl import OpenCLMatMul
 
 
