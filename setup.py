@@ -34,7 +34,9 @@ install_requires = [
 # Info
 classifiers = [
     'License :: OSI Approved :: BSD License',
-    'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
     'Topic :: Scientific/Engineering'
 ]
 
@@ -47,6 +49,10 @@ routines such as cuBLAS GEMM or clBLAS GEMM.  GiMMiK was originally
 developed as part of Bartosz Wozniak's master's thesis in the
 Department of Computing at Imperial College London and is currently
 maintained by Freddie Witherden.'''
+
+# Keywords
+keywords = ['Matrix Multiplication', 'ISPC', 'GPU', 'CUDA', 'HIP', 'Metal',
+            'OpenCL']
 
 setup(name='gimmik',
       version=version,
@@ -63,5 +69,5 @@ setup(name='gimmik',
       maintainer_email='freddie@witherden.org',
       url='https://github.com/vincentlab/GiMMiK',
       license='BSD',
-      keywords=['Matrix Multiplication', 'GPU', 'CUDA', 'OpenCL'],
+      keywords=keywords,
       classifiers=classifiers)
