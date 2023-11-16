@@ -19,8 +19,8 @@ ${kname}(int n,
 ${kname}(__global const ${dtype}* restrict b, __global ${dtype}* restrict c)
 {
     const int n = ${-(-n // width)};
-    const int ldb = ${ldb // width};
-    const int ldc = ${ldc // width};
+    const ${'long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
+    const ${'long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
 % endif
     int i = get_global_id(0);
     int lx = get_local_id(0), ly = get_local_id(1);

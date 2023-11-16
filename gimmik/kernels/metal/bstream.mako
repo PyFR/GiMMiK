@@ -15,8 +15,8 @@ ${kname}(device const ${dtype}* b, device ${dtype}* c,
          uint i [[thread_position_in_grid]])
 {
     const int n = ${-(-n // width)};
-    const int ldb = ${ldb // width};
-    const int ldc = ${ldc // width};
+    const ${'long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
+    const ${'long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
 % endif
 
     if (i < n)
