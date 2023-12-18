@@ -8,8 +8,8 @@ ${kname}(int n,
 ${kname}(__global const ${dtype}* restrict b, __global ${dtype}* restrict c)
 {
     const int n = ${n};
-    const int ldb = ${ldb};
-    const int ldc = ${ldc};
+    const ${'long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
+    const ${'long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
 % endif
     int i = get_global_id(0);
 

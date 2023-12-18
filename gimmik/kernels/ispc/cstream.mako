@@ -8,8 +8,8 @@ ${kname}(uniform int n,
 ${kname}(const uniform ${dtype} b[], ${dtype} uniform c[])
 {
     const uniform int n = ${n};
-    const uniform int ldb = ${ldb};
-    const uniform int ldc = ${ldc};
+    const uniform ${'long long' if k*ldb >= 2**31 else 'int'} ldb = ${ldb};
+    const uniform ${'long long' if m*ldc >= 2**31 else 'int'} ldc = ${ldc};
 % endif
 
     foreach (i = 0 ... n)

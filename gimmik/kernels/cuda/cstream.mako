@@ -17,8 +17,8 @@ ${kname}(int n,
 ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 {
     const int n = ${-(-n // width)};
-    const int ldb = ${ldb // width};
-    const int ldc = ${ldc // width};
+    const ${'long long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
+    const ${'long long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
 % endif
     const int i = blockDim.x*blockIdx.x + threadIdx.x;
     ${dtype} dotp;

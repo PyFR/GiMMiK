@@ -8,8 +8,8 @@ ${kname}(int n,
 ${kname}(const ${dtype}* restrict b, ${dtype}* restrict c)
 {
     const int n = ${n};
-    const int ldb = ${ldb};
-    const int ldc = ${ldc};
+    const ${'long long' if k*ldb >= 2**31 else 'int'} ldb = ${ldb};
+    const ${'long long' if m*ldc >= 2**31 else 'int'} ldc = ${ldc};
 % endif
 
     #pragma omp parallel for simd private(dotp)
