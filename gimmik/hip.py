@@ -20,7 +20,7 @@ class HIPMatMul(MatMul):
         meta = {'block': (blkx, ms, 1), 'shared': 2*bsz*blkx*dsize}
         yield ('bstream-msplit', args, meta)
 
-        ## Two-way k-split B loading, C streaming kernel
+        # Two-way k-split B loading, C streaming kernel
         ks, csz, blkx = 2, 24, 64
         args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
         meta = {'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize}
