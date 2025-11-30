@@ -1,11 +1,18 @@
 <%inherit file='base'/>
 
-__global__ void
+__global__ __launch_bounds__(${blocksz}) void
 % if n is None:
 ${kname}(int n,
          const ${dtype}* __restrict__ b, int ldb,
          ${dtype}* __restrict__ c, int ldc)
 {
+#if ( ( defined(__CUDACC_VER_MAJOR__) && ( __CUDACC_VER_MAJOR__ >= 13 ) ) || \
+      ( ( defined(__CUDACC_VER_MAJOR__) && ( __CUDACC_VER_MAJOR__ >= 12 ) && \
+        ( defined(__CUDACC_VER_MINOR__) && ( __CUDACC_VER_MINOR__ >= 9 ) ) ) ) \
+    )
+    asm volatile (".pragma \"enable_smem_spilling\";");
+#endif
+
   % if width > 1:
     n = ((n + ${width} - 1) / ${width}) * ${width};
     ldb /= ${width};
@@ -14,6 +21,12 @@ ${kname}(int n,
 % else:
 ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 {
+#if ( ( defined(__CUDACC_VER_MAJOR__) && ( __CUDACC_VER_MAJOR__ >= 13 ) ) || \
+      ( ( defined(__CUDACC_VER_MAJOR__) && ( __CUDACC_VER_MAJOR__ >= 12 ) && \
+        ( defined(__CUDACC_VER_MINOR__) && ( __CUDACC_VER_MINOR__ >= 9 ) ) ) ) \
+    )
+    asm volatile (".pragma \"enable_smem_spilling\";");
+#endif
     const int n = ${-(-n // width)};
     const ${'long long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
     const ${'long long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};

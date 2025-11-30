@@ -10,20 +10,20 @@ class CUDAMatMul(MatMul):
 
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
         # B loading, C streaming kernel
-        yield ('cstream', {}, {})
+        yield ('cstream', {'blocksz': self.basemeta['block'][0]}, {})
 
         # B streaming, C accumulation kernel
-        yield ('bstream', {}, {})
+        yield ('bstream', {'blocksz': self.basemeta['block'][0]}, {})
 
         # Four-way m-split B streaming, C accumulation kernel
         ms, bsz, blkx = 4, 24, 32
-        args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
+        args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx, 'blocksz': blkx*ms}
         meta = {'block': (blkx, ms, 1), 'shared': 2*bsz*blkx*dsize}
         yield ('bstream-msplit', args, meta)
 
         # Two-way k-split B loading, C streaming kernel
         ks, csz, blkx = 2, 24, 32
-        args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
+        args = {'ksplit': ks, 'csz': csz, 'blockx': blkx, 'blocksz': blkx*ks}
         meta = {'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize}
         yield ('cstream-ksplit', args, meta)
 
@@ -31,14 +31,15 @@ class CUDAMatMul(MatMul):
         if (dtype == 'float' and
             self.aligne is not None and self.aligne % 2 == 0):
             # Vector B loading, C streaming kernel
-            args = {'dtype': 'float2', 'width': 2}
+            args = {'dtype': 'float2', 'width': 2,
+                    'blocksz': self.basemeta['block'][0]}
             meta = {'width': 2}
             yield ('cstream', args, meta)
 
             # Vector four-way m-split B streaming, C accumulation kernel
             ms, bsz, blkx = 4, 16, 32
-            args = {'dtype': 'float2', 'width': 2, 'msplit': ms,
-                    'bsz': bsz, 'blockx': blkx}
+            args = {'dtype': 'float2', 'width': 2, 'msplit': ms, 'bsz': bsz,
+                    'blockx': blkx, 'blocksz': blkx*ms}
             meta = {'block': (blkx, ms, 1), 'width': 2,
                     'shared': 2*blkx*bsz*2*dsize}
             yield ('bstream-msplit', args, meta)
@@ -46,7 +47,7 @@ class CUDAMatMul(MatMul):
             # Vector two-way k-split B loading, C streaming kernel
             ks, csz, blkx = 2, 24, 32
             args = {'dtype': 'float2', 'width': 2, 'ksplit': ks,
-                    'csz': csz, 'blockx': blkx}
+                    'csz': csz, 'blockx': blkx, 'blocksz': blkx*ks}
             meta = {'block': (blkx, ks, 1), 'width': 2,
                     'shared': 2*(ks - 1)*csz*blkx*dsize}
             yield ('cstream-ksplit', args, meta)

@@ -5,7 +5,7 @@ mx = partition(A, into=msplit, by='rows')
 bchunks = chunk(bix, bsz)
 %>
 
-__global__ void
+__global__ __launch_bounds__(${blocksz}) void
 % if n is None:
 ${kname}(int n,
          const ${dtype}* __restrict__ b, int ldb,

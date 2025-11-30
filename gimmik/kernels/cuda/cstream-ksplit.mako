@@ -6,7 +6,7 @@ cchunks = chunk(range(m), csz)
 loaded = set()
 %>
 
-__global__ void
+__global__ __launch_bounds__(${blocksz}) void
 % if n is None:
 ${kname}(int n,
          const ${dtype}* __restrict__ b, int ldb,
