@@ -8,10 +8,7 @@ ${kname}(int n,
          const ${dtype}* __restrict__ b, int ldb,
          ${dtype}* __restrict__ c, int ldc)
 {
-#if ( ( defined(__CUDACC_VER_MAJOR__) && ( __CUDACC_VER_MAJOR__ >= 13 ) ) || \
-      ( ( defined(__CUDACC_VER_MAJOR__) && ( __CUDACC_VER_MAJOR__ >= 12 ) && \
-        ( defined(__CUDACC_VER_MINOR__) && ( __CUDACC_VER_MINOR__ >= 9 ) ) ) ) \
-    )
+#if ( __CUDACC_VER_MAJOR__ >= 13 )
     asm volatile (".pragma \"enable_smem_spilling\";");
 #endif
   % if width > 1:
@@ -22,10 +19,7 @@ ${kname}(int n,
 % else:
 ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 {
-#if ( ( defined(__CUDACC_VER_MAJOR__) && ( __CUDACC_VER_MAJOR__ >= 13 ) ) || \
-      ( ( defined(__CUDACC_VER_MAJOR__) && ( __CUDACC_VER_MAJOR__ >= 12 ) && \
-        ( defined(__CUDACC_VER_MINOR__) && ( __CUDACC_VER_MINOR__ >= 9 ) ) ) ) \
-    )
+#if ( __CUDACC_VER_MAJOR__ >= 13 )
     asm volatile (".pragma \"enable_smem_spilling\";");
 #endif
     const int n = ${-(-n // width)};
