@@ -7,6 +7,8 @@ class CUDAMatMul(MatMul):
     platform = 'cuda'
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0,
                 'dynamic_shared': 0}
+    vtypes = {'float': {'float2': (2, 2), 'float4': (4, 4)},
+              'double': {'double2': (2, 2)}}
 
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
         # B loading, C streaming kernel
@@ -27,29 +29,29 @@ class CUDAMatMul(MatMul):
         meta = {'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize}
         yield ('cstream-ksplit', args, meta)
 
-        # At single precision also consider vectorized kernels
-        if (dtype == 'float' and
-            self.aligne is not None and self.aligne % 2 == 0):
-            # Vector B loading, C streaming kernel
-            args = {'dtype': 'float2', 'width': 2}
-            meta = {'width': 2}
-            yield ('cstream', args, meta)
+        # Consider some vector types
+        for vtype, (width, aligne) in self.vtypes[dtype]:
+            if self.aligne is not None and self.aligne % aligne == 0:
+                # Vector B loading, C streaming kernel
+                args = {'dtype': vtype, 'width': width}
+                meta = {'width': width}
+                yield ('cstream', args, meta)
 
-            # Vector four-way m-split B streaming, C accumulation kernel
-            ms, bsz, blkx = 4, 16, 32
-            args = {'dtype': 'float2', 'width': 2, 'msplit': ms,
-                    'bsz': bsz, 'blockx': blkx}
-            meta = {'block': (blkx, ms, 1), 'width': 2,
-                    'shared': 2*blkx*bsz*2*dsize}
-            yield ('bstream-msplit', args, meta)
+                # Vector four-way m-split B streaming, C accumulation kernel
+                ms, bsz, blkx = 4, 16, 32
+                args = {'dtype': vtype, 'width': width, 'msplit': ms,
+                        'bsz': bsz, 'blockx': blkx}
+                meta = {'block': (blkx, ms, 1), 'width': width,
+                        'shared': width*blkx*bsz*2*dsize}
+                yield ('bstream-msplit', args, meta)
 
-            # Vector two-way k-split B loading, C streaming kernel
-            ks, csz, blkx = 2, 24, 32
-            args = {'dtype': 'float2', 'width': 2, 'ksplit': ks,
-                    'csz': csz, 'blockx': blkx}
-            meta = {'block': (blkx, ks, 1), 'width': 2,
-                    'shared': 2*(ks - 1)*csz*blkx*dsize}
-            yield ('cstream-ksplit', args, meta)
+                # Vector two-way k-split B loading, C streaming kernel
+                ks, csz, blkx = 2, 24, 32
+                args = {'dtype': vtype, 'width': width, 'ksplit': ks,
+                        'csz': csz, 'blockx': blkx}
+                meta = {'block': (blkx, ks, 1), 'width': width,
+                        'shared': width*(ks - 1)*csz*blkx*dsize}
+                yield ('cstream-ksplit', args, meta)
 
     def _process_meta(self, meta):
         if self.n is not None:
