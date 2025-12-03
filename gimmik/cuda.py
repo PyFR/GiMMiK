@@ -7,8 +7,8 @@ class CUDAMatMul(MatMul):
     platform = 'cuda'
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0,
                 'dynamic_shared': 0}
-    vtypes = {'float': {'float2': (2, 2), 'float4': (4, 4)},
-              'double': {'double2': (2, 2)}}
+    vtypes = {'float': {'float2': 2, 'float4': 4},
+              'double': {'double2': 2}}
 
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
         # B loading, C streaming kernel
@@ -30,8 +30,8 @@ class CUDAMatMul(MatMul):
         yield ('cstream-ksplit', args, meta)
 
         # Consider some vector types
-        for vtype, (width, aligne) in self.vtypes[dtype]:
-            if self.aligne is not None and self.aligne % aligne == 0:
+        for vtype, width in self.vtypes[dtype].items():
+            if self.aligne is not None and self.aligne % width == 0:
                 # Vector B loading, C streaming kernel
                 args = {'dtype': vtype, 'width': width}
                 meta = {'width': width}
