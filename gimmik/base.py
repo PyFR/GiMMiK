@@ -144,7 +144,8 @@ class MatMul:
         src = tpl.render(**tplargs)
 
         # At single precision suffix all floating point constants by 'f'
-        if dtype == 'float':
+        # (PTX doesn't use an 'f' suffix for FP literals)
+        if dtype == 'float' and self.platform != 'ptx':
             src = re.sub(r'(?=\d*[.eE])(?=\.?\d)\d*\.?\d*(?:[eE][+-]?\d+)?',
                          r'\g<0>f', src)
 

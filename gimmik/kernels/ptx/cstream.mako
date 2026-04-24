@@ -4,11 +4,10 @@
 pftype = "f32" if dtype == "float" else "f64"
 dwidth_i = 4 if dtype == "float" else 8
 fzero = "0f00000000" if dtype == "float" else "0d0000000000000000"
-has_zero_rows = any(jx == -1 for jx in afix)
 bix_list = list(bix)
-bix_idx = {kx: i for i, kx in enumerate(bix_list)}
-preload_c = beta != 0
-need_scale = beta != 0 and beta != 1
+bix_pos = {kx: i for i, kx in enumerate(bix_list)}
+K_used = len(bix_list)
+row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0] for j in range(m)]
 %>
 
 % if n is None:
@@ -28,7 +27,7 @@ need_scale = beta != 0 and beta != 1
 % endif
     .reg .u32 n, id;
     .reg .u64 b, c, b_base, c_base;
-    .reg .${pftype} csub<${m}>, bv<${len(bix_list)}>;
+    .reg .${pftype} bv<${K_used}>, dotp;
     .reg .pred p1;
 
 % if n is None:
@@ -68,89 +67,74 @@ need_scale = beta != 0 and beta != 1
     .reg .u64 _bptr;
     mul.lo.u32 _boff, ldb, ${kx};
     mad.wide.u32 _bptr, ${dwidth_i}, _boff, b_base;
-    ld.weak.global.cg.${pftype} bv${i}, [_bptr];
+    ld.global.nc.${pftype} bv${i}, [_bptr];
     }
 % else:
-    ld.weak.global.cg.${pftype} bv${i}, [b_base + ${ldb*kx*dwidth_i}];
+    ld.global.nc.${pftype} bv${i}, [b_base + ${ldb*kx*dwidth_i}];
 % endif
 %endfor
 
-% if preload_c:
-## Pre-load C so per-row completion is a plain store
-%  for j in range(m):
-%   if afix[j] != -1:
+## Compute and store each output row
+%for j in range(m):
+%  if row_nz[j]:
+%   for i_nz, (kx, jx) in enumerate(row_nz[j]):
+%    if i_nz == 0:
+    mul.${pftype} dotp, bv${bix_pos[kx]}, ${jx};
+%    else:
+    fma.rn.${pftype} dotp, bv${bix_pos[kx]}, ${jx}, dotp;
+%    endif
+%   endfor
+% if beta == 0:
 % if n is None:
     {
     .reg .u32 _coff;
     .reg .u64 _cptr;
     mul.lo.u32 _coff, ldc, ${j};
     mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
-    ld.weak.global.cg.${pftype} csub${j}, [_cptr];
+    st.weak.global.cg.${pftype} [_cptr], dotp;
     }
 % else:
-    ld.weak.global.cg.${pftype} csub${j}, [c_base + ${ldc*j*dwidth_i}];
+    st.weak.global.cg.${pftype} [c_base + ${ldc*j*dwidth_i}], dotp;
 % endif
-%   endif
-%  endfor
-% if need_scale:
-%  for j in range(m):
-%   if afix[j] != -1:
-    mul.${pftype} csub${j}, csub${j}, ${float(beta)};
-%   endif
-%  endfor
-% endif
-% endif
-
-## Main compute
-%for kx in bix_list:
-%  for j, jx in enumerate(A[:, kx]):
-%    if jx != 0:
-%      if preload_c:
-    fma.rn.${pftype} csub${j}, bv${bix_idx[kx]}, ${jx}, csub${j};
-%      elif kx == afix[j]:
-    mul.${pftype} csub${j}, bv${bix_idx[kx]}, ${jx};
-%      else:
-    fma.rn.${pftype} csub${j}, bv${bix_idx[kx]}, ${jx}, csub${j};
-%      endif
-%    endif
-%    if kx == alix[j]:
-% if n is None:
+% else:
     {
+    .reg .${pftype} _ctmp;
+% if n is None:
     .reg .u32 _coff;
     .reg .u64 _cptr;
     mul.lo.u32 _coff, ldc, ${j};
     mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
-    st.weak.global.cg.${pftype} [_cptr], csub${j};
-    }
+    ld.global.${pftype} _ctmp, [_cptr];
+    fma.rn.${pftype} _ctmp, _ctmp, ${float(beta)}, dotp;
+    st.global.${pftype} [_cptr], _ctmp;
 % else:
-    st.weak.global.cg.${pftype} [c_base + ${ldc*j*dwidth_i}], csub${j};
+    ld.global.${pftype} _ctmp, [c_base + ${ldc*j*dwidth_i}];
+    fma.rn.${pftype} _ctmp, _ctmp, ${float(beta)}, dotp;
+    st.global.${pftype} [c_base + ${ldc*j*dwidth_i}], _ctmp;
+% endif
+    }
 % endif
 
-%    endif
-%  endfor
-%endfor
-
-% if has_zero_rows:
+%  else:
+## Zero row of A
+% if beta == 0:
     {
     .reg .${pftype} _tmp;
     mov.${pftype} _tmp, ${fzero};
-%  for j, jx in enumerate(afix):
-%    if jx == -1 and beta == 0:
 % if n is None:
-    {
     .reg .u32 _coff;
     .reg .u64 _cptr;
     mul.lo.u32 _coff, ldc, ${j};
     mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
     st.weak.global.cg.${pftype} [_cptr], _tmp;
-    }
 % else:
     st.weak.global.cg.${pftype} [c_base + ${ldc*j*dwidth_i}], _tmp;
 % endif
-
-%    elif jx == -1:
-% if n is None:
+    }
+% elif beta != 1:
     {
+    .reg .${pftype} _tmp;
+% if n is None:
     .reg .u32 _coff;
     .reg .u64 _cptr;
     mul.lo.u32 _coff, ldc, ${j};
@@ -158,16 +142,15 @@ need_scale = beta != 0 and beta != 1
     ld.global.${pftype} _tmp, [_cptr];
     mul.${pftype} _tmp, _tmp, ${float(beta)};
     st.global.${pftype} [_cptr], _tmp;
-    }
 % else:
     ld.global.${pftype} _tmp, [c_base + ${ldc*j*dwidth_i}];
     mul.${pftype} _tmp, _tmp, ${float(beta)};
     st.global.${pftype} [c_base + ${ldc*j*dwidth_i}], _tmp;
 % endif
-%    endif
-%  endfor
     }
 % endif
+%  endif
+%endfor
 
 $L_EXIT:
     ret;

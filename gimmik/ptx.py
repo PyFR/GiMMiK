@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 
+import numpy as np
+
 from gimmik.base import MatMul
+
 
 class PTXSource:
     def __init__(self):
@@ -48,16 +51,97 @@ class PTXMatMul(MatMul):
             src += f"mov.{out_type} {out[0]}, {base[0]};"
         return f"{{{src}\n\t}}"
 
-
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
         base_args = {'address': lambda o, b, s, *off: self._address(o, b, s,
         *off), 'cc': compute_capability}
 
-        # B streaming, C accumulation kernel
-        args = base_args | {}
-        yield ('bstream', args, {})
+        # Matrix-property gates
+        arr = self.A
+        nnz = int(np.count_nonzero(arr))
+        nuq = int(len(np.unique(np.abs(arr))))
+        density = nnz / arr.size
+        sparse_suitable = (nuq <= 28) or (density <= 0.15)
+
+        cc = compute_capability or (0, 0)
+        dense_suitable = (
+            dtype == 'double'
+            and cc >= (9, 0)
+            and self.n is not None
+            and self.m <= 128
+            and self.k <= 128
+        )
+
+        if sparse_suitable:
+            yield ('cstream', base_args | {}, {})
+
+            yield ('bstream', base_args | {}, {})
+
+            ms, bsz, blkx = 4, 24, 32
+            args = base_args | {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
+            meta = {'block': (blkx, ms, 1), 'shared': 2*bsz*blkx*dsize}
+            yield ('bstream-msplit', args, meta)
+
+            ms, bsz, blkx = 1, 16, 128
+            args = base_args | {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
+            meta = {'block': (blkx, ms, 1), 'shared': 2*bsz*blkx*dsize}
+            yield ('bstream-msplit', args, meta)
+
+            ks, csz, blkx = 2, 24, 32
+            args = base_args | {'ksplit': ks, 'csz': csz, 'blockx': blkx}
+            meta = {'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize}
+            yield ('cstream-ksplit', args, meta)
+
+            K_used = len(self.bix)
+            if K_used > 500:
+                ks, csz, blkx = 4, 20, 32
+                args = base_args | {'ksplit': ks, 'csz': csz, 'blockx': blkx}
+                meta = {'block': (blkx, ks, 1),
+                        'shared': (ks - 1)*csz*blkx*dsize}
+                yield ('cstream-ksplit', args, meta)
+
+            if (dtype == 'double' and self.n is not None and self.n % 2 == 0
+                    and K_used <= 100
+                    and (self.aligne is None or self.aligne % 2 == 0)):
+                blkx = 128
+                args = base_args | {'blockx': blkx}
+                meta = {'block': (blkx, 1, 1), 'width': 2}
+                yield ('cstream-w2', args, meta)
+
+        if dense_suitable:
+            # Dense DMMA m8n8k4 templates. Yields a small cover of the nn × w
+            # space that empirically spans the autotune winners seen on tet
+            # p=3,4 at N=500k. The PyFR wrapper's _benchmark picks the fastest.
+            for tpl in ('dense-mma-smem-gA', 'dense-mma-gAd'):
+                for nn in (1, 2, 4):
+                    for w in (2, 4, 8):
+                        blkx = 32 * w
+                        n_per_cta = 8 * nn * w
+                        if n_per_cta > self.n:
+                            continue
+                        args = base_args | {'warps_per_cta': w, 'nn': nn}
+                        meta = {
+                            'block': (blkx, 1, 1),
+                            'grid': (-(-self.n // n_per_cta), 1, 1),
+                        }
+                        yield (tpl, args, meta)
+
+            # Extra fine-grained nn for shapes where a specific nn usually
+            # wins (p3/tet/m132, p4/tet/m132).
+            for tpl in ('dense-mma-smem-gA', 'dense-mma-gAd'):
+                for nn in (6,):
+                    for w in (1, 4):
+                        blkx = 32 * w
+                        n_per_cta = 8 * nn * w
+                        if n_per_cta > self.n:
+                            continue
+                        args = base_args | {'warps_per_cta': w, 'nn': nn}
+                        meta = {
+                            'block': (blkx, 1, 1),
+                            'grid': (-(-self.n // n_per_cta), 1, 1),
+                        }
+                        yield (tpl, args, meta)
 
     def _process_meta(self, meta):
-        if self.n is not None:
+        if self.n is not None and 'grid' not in meta:
             div = meta['block'][0]*meta['width']
             meta['grid'] = (-(-self.n // div), 1, 1)
