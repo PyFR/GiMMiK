@@ -1,57 +1,24 @@
 <%inherit file='base'/>
 
-<%!
-import struct
-import math
-%>
-
 <%
 assert dtype == "double"
 assert n is not None and ldb is not None and ldc is not None
-
-M, K_ = A.shape
-assert K_ == k
-M_PAD   = -(-M // 8) * 8
-M_TILES = M_PAD // 8
-K_REM   = k % 4
-K_PAD   = k if K_REM == 0 else k + (4 - K_REM)
-K_ITERS = K_PAD // 4
-
-# A in fragment-layout (same as dense-mma-smem-nn)
-a_u64 = []
-for m_tile in range(M_TILES):
-    for k_iter in range(K_ITERS):
-        for lane in range(32):
-            r_div4 = lane // 4
-            r_mod4 = lane % 4
-            i = m_tile * 8 + r_div4
-            j = k_iter * 4 + r_mod4
-            v = float(A[i, j]) if (i < M and j < k) else 0.0
-            u = struct.unpack('<Q', struct.pack('<d', v))[0]
-            a_u64.append(f'0x{u:016x}')
-
-WARPS_PER_CTA = warps_per_cta
-NN = nn
-BLOCKX     = 32 * WARPS_PER_CTA
-N_PER_WARP = 8 * NN
-N_PER_CTA  = WARPS_PER_CTA * N_PER_WARP
-A_ELEMS    = M_TILES * K_ITERS * 32
-# v2 load: 2 f64 per thread per iter -> 2*BLOCKX elements per copy iter
-A_PAIRS    = A_ELEMS // 2                # number of f64x2 pairs
-A_PAIRS_TAIL = A_ELEMS % 2               # 0 if even, 1 if odd
-COPY_V2_ITERS = math.ceil(A_PAIRS / BLOCKX)
-
-FRAG_STRIDE_BYTES = 32 * 8
-B_KITER_STRIDE    = 4 * ldb * 8
-B_NTILE_STRIDE    = 8 * 8
-C_MTILE_STRIDE    = 8 * ldc * 8
-C_NTILE_STRIDE    = 8 * 8
+# Cooperative-copy params (gA-only)
+blockx        = 32 * warps_per_cta
+a_pairs       = a_elems // 2
+a_pairs_tail  = a_elems % 2
+copy_v2_iters = (a_pairs + blockx - 1) // blockx
+bs = bool(context.get('block_stealing', False))
 %>
 
-.global .align 16 .b64 ${kname}_Ag[${A_ELEMS}] = {
+% if bs:
+.shared .align 8 .b64 ${kname}_mbar;
+.shared .align 16 .b8 ${kname}_workid[16];
+% endif
+.global .align 16 .b64 ${kname}_Ag[${a_elems}] = {
     ${', '.join(a_u64)}
 };
-.shared .align 16 .b64 ${kname}_As[${A_ELEMS}];
+.shared .align 16 .b64 ${kname}_As[${a_elems}];
 
 .visible .entry ${kname}(.param .u64 _b,
                          .param .u64 _c)
@@ -62,11 +29,18 @@ C_NTILE_STRIDE    = 8 * 8
     .reg .u64  as_thr_base, b_thr_base, c_thr_base;
     .reg .pred pwarp_exit;
     .reg .f64  a_frag;
-% for nt in range(NN):
+% if bs:
+    .reg .u32  ctaid;
+    .reg .u32  mbar_a, work_a;
+    .reg .pred p_root, p_done, p_have;
+% endif
+% for nt in range(nn):
     .reg .u32  b_col_${nt}, c_col0_${nt}, c_col1_${nt};
+% if not n_col_aligned:
     .reg .pred pvalid_bcol_${nt}, pvalid_c0col_${nt}, pvalid_c1col_${nt};
+% endif
     .reg .f64  b_frag_${nt};
-    .reg .f64  c0_${nt}_<${M_TILES}>, c1_${nt}_<${M_TILES}>;
+    .reg .f64  c0_${nt}_<${m_tiles}>, c1_${nt}_<${m_tiles}>;
 % endfor
 
     ld.param.u64 b_ptr, [_b];
@@ -80,26 +54,34 @@ C_NTILE_STRIDE    = 8 * 8
     shr.u32 r_div4, lane, 2;
     and.b32 r_mod4, lane, 3;
 
-    // ---- Cooperative copy A from .global to .shared using v2 loads ----
+% if bs:
+    setp.eq.u32 p_root, tid, 0;
+    mov.u32 mbar_a, ${kname}_mbar;
+    mov.u32 work_a, ${kname}_workid;
+    @p_root mbarrier.init.shared::cta.b64 [mbar_a], 1;
+    bar.sync 0;
+% endif
+
+    // Cooperative copy A from .global to .shared via v2 loads
     {
         .reg .u64 a_glb_base, a_smem_base;
         mov.u64 a_glb_base,  ${kname}_Ag;
         cvta.to.global.u64 a_glb_base, a_glb_base;
         mov.u64 a_smem_base, ${kname}_As;
-% for ci in range(COPY_V2_ITERS):
+% for ci in range(copy_v2_iters):
 <%
-    base_pair = ci * BLOCKX
-    is_last = ci == COPY_V2_ITERS - 1
-    pairs_this = min(BLOCKX, A_PAIRS - base_pair)
+    base_pair = ci * blockx
+    is_last = ci == copy_v2_iters - 1
+    pairs_this = min(blockx, a_pairs - base_pair)
 %>
         {
             .reg .u32 pidx;
             .reg .u64 off64, gaddr, saddr;
             .reg .f64 v0, v1;
-% if is_last and pairs_this < BLOCKX:
+% if is_last and pairs_this < blockx:
             .reg .pred plast;
             add.u32 pidx, tid, ${base_pair};
-            setp.lt.u32 plast, pidx, ${A_PAIRS};
+            setp.lt.u32 plast, pidx, ${a_pairs};
             mul.wide.u32 off64, pidx, 16;
             add.u64 gaddr, a_glb_base,  off64;
             add.u64 saddr, a_smem_base, off64;
@@ -115,15 +97,15 @@ C_NTILE_STRIDE    = 8 * 8
 % endif
         }
 % endfor
-% if A_PAIRS_TAIL:
-        // Odd element at the very end (rare; A_ELEMS odd)
+% if a_pairs_tail:
+        // Tail element (only when a_elems is odd)
         {
             .reg .pred plast;
             .reg .u64 gaddr, saddr;
             .reg .f64 v;
             setp.eq.u32 plast, tid, 0;
-            add.u64 gaddr, a_glb_base,  ${(A_ELEMS-1) * 8};
-            add.u64 saddr, a_smem_base, ${(A_ELEMS-1) * 8};
+            add.u64 gaddr, a_glb_base,  ${(a_elems-1) * 8};
+            add.u64 saddr, a_smem_base, ${(a_elems-1) * 8};
             @plast ld.global.nc.f64 v, [gaddr];
             @plast st.shared.f64    [saddr], v;
         }
@@ -131,17 +113,50 @@ C_NTILE_STRIDE    = 8 * 8
     }
     bar.sync 0;
 
+    // Lane-only base; lifted out of the optional steal loop
+    {
+        .reg .u64 t64, a_smem_base, lane64;
+        mov.u64      a_smem_base, ${kname}_As;
+        cvt.u64.u32  lane64, lane;
+        shl.b64      t64, lane64, 3;
+        add.u64      as_thr_base, a_smem_base, t64;
+    }
+
+% for mt in range(m_tiles):
+% if pm_runtime(mt):
+    .reg .pred pm_${mt};
+    {
+        .reg .u32 crow;
+        add.u32 crow, r_div4, ${mt * 8};
+        setp.lt.u32 pm_${mt}, crow, ${m};
+    }
+% endif
+% endfor
+
+% if bs:
+    mov.u32 ctaid, %ctaid.x;
+$L_LOOP:
+% endif
+
     {
         .reg .u32 cta;
+% if bs:
+        mov.u32    cta, ctaid;
+% else:
         mov.u32    cta, %ctaid.x;
-        mul.lo.u32 cta, cta, ${N_PER_CTA};
-        mul.lo.u32 warp_n_base, warp, ${N_PER_WARP};
+% endif
+        mul.lo.u32 cta, cta, ${n_per_cta};
+        mul.lo.u32 warp_n_base, warp, ${n_per_warp};
         add.u32    warp_n_base, warp_n_base, cta;
     }
     setp.ge.u32 pwarp_exit, warp_n_base, ${n};
+% if bs:
+    @pwarp_exit bra $L_STEAL;
+% else:
     @pwarp_exit bra $L_EXIT;
+% endif
 
-% for nt in range(NN):
+% for nt in range(nn):
     add.u32 b_col_${nt}, warp_n_base, ${nt * 8};
     add.u32 b_col_${nt}, b_col_${nt}, r_div4;
     {
@@ -151,18 +166,12 @@ C_NTILE_STRIDE    = 8 * 8
         add.u32 c_col0_${nt}, c_col0_${nt}, t;
         add.u32 c_col1_${nt}, c_col0_${nt}, 1;
     }
+% if not n_col_aligned:
     setp.lt.u32 pvalid_bcol_${nt},  b_col_${nt},  ${n};
     setp.lt.u32 pvalid_c0col_${nt}, c_col0_${nt}, ${n};
     setp.lt.u32 pvalid_c1col_${nt}, c_col1_${nt}, ${n};
+% endif
 % endfor
-
-    {
-        .reg .u64 t64, a_smem_base, lane64;
-        mov.u64      a_smem_base, ${kname}_As;
-        cvt.u64.u32  lane64, lane;
-        shl.b64      t64, lane64, 3;
-        add.u64      as_thr_base, a_smem_base, t64;
-    }
 
     {
         .reg .u64 t64, bcol64;
@@ -182,60 +191,60 @@ C_NTILE_STRIDE    = 8 * 8
         add.u64      c_thr_base, c_ptr, t64;
     }
 
-% for mt in range(M_TILES):
-    .reg .pred pm_${mt};
-    {
-        .reg .u32 crow;
-        add.u32 crow, r_div4, ${mt * 8};
-        setp.lt.u32 pm_${mt}, crow, ${M};
-    }
-% endfor
-
-% for nt in range(NN):
-% for mt in range(M_TILES):
+% for nt in range(nn):
+% for mt in range(m_tiles):
 % if beta == 0:
     mov.f64 c0_${nt}_${mt}, 0d0000000000000000;
     mov.f64 c1_${nt}_${mt}, 0d0000000000000000;
 % else:
+<%
+    pm = f'pm_{mt}' if pm_runtime(mt) else None
+    pvc0 = f'pvalid_c0col_{nt}' if not n_col_aligned else None
+    pvc1 = f'pvalid_c1col_{nt}' if not n_col_aligned else None
+    needs_zero_init = pm is not None or pvc0 is not None or pvc1 is not None
+%>
     {
         .reg .u64 caddr;
-        .reg .pred p0, p1;
-        add.u64      caddr, c_thr_base, ${mt * C_MTILE_STRIDE + nt * C_NTILE_STRIDE};
-        and.pred     p0, pm_${mt}, pvalid_c0col_${nt};
-        and.pred     p1, pm_${mt}, pvalid_c1col_${nt};
+        add.u64      caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
+% if needs_zero_init:
         mov.f64      c0_${nt}_${mt}, 0d0000000000000000;
         mov.f64      c1_${nt}_${mt}, 0d0000000000000000;
-        @p0 ld.global.f64 c0_${nt}_${mt}, [caddr];
-        @p1 ld.global.f64 c1_${nt}_${mt}, [caddr + 8];
+% endif
+        ${pred_emit(f'ld.global.f64 c0_{nt}_{mt}, [caddr];', pm, pvc0, pred_reg=f'p0_{nt}_{mt}')}
+        ${pred_emit(f'ld.global.f64 c1_{nt}_{mt}, [caddr + 8];', pm, pvc1, pred_reg=f'p1_{nt}_{mt}')}
     }
 % endif
 % endfor
 % endfor
 
-% for ki in range(K_ITERS):
-% for nt in range(NN):
+% for ki in range(k_iters):
+% for nt in range(nn):
+<%
+    pvb = f'pvalid_bcol_{nt}' if not n_col_aligned else None
+    k_tail = (k_rem != 0 and ki == k_iters - 1)
+    needs_zero = pvb is not None or k_tail
+    pbrow = 'pbrow' if k_tail else None
+%>
     {
         .reg .u64 baddr;
-        .reg .pred pb_load;
-        add.u64 baddr, b_thr_base, ${ki * B_KITER_STRIDE + nt * B_NTILE_STRIDE};
-% if K_REM != 0 and ki == K_ITERS - 1:
+        add.u64 baddr, b_thr_base, ${ki * b_kiter_stride + nt * b_ntile_stride};
+% if needs_zero:
+        mov.f64 b_frag_${nt}, 0d0000000000000000;
+% endif
+% if k_tail:
+        .reg .pred pbrow;
         {
             .reg .u32 brow;
-            .reg .pred pbrow;
             add.u32 brow, r_mod4, ${ki * 4};
             setp.lt.u32 pbrow, brow, ${k};
-            and.pred pb_load, pbrow, pvalid_bcol_${nt};
         }
-% else:
-        and.pred pb_load, pvalid_bcol_${nt}, pvalid_bcol_${nt};
 % endif
-        mov.f64 b_frag_${nt}, 0d0000000000000000;
-        @pb_load ld.global.nc.f64 b_frag_${nt}, [baddr];
+        ${pred_emit(f'ld.global.nc.f64 b_frag_{nt}, [baddr];', pbrow, pvb, pred_reg=f'pb_{ki}_{nt}')}
     }
 % endfor
-% for mt in range(M_TILES):
-    ld.shared.f64 a_frag, [as_thr_base + ${(mt * K_ITERS + ki) * FRAG_STRIDE_BYTES}];
-% for nt in range(NN):
+% for mt in range(m_tiles):
+    ld.shared.f64 a_frag, [as_thr_base + ${(mt * k_iters + ki) * frag_stride_bytes}];
+% for nt in range(nn):
     mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64
         {c0_${nt}_${mt}, c1_${nt}_${mt}},
         {a_frag},
@@ -245,19 +254,51 @@ C_NTILE_STRIDE    = 8 * 8
 % endfor
 % endfor
 
-% for nt in range(NN):
-% for mt in range(M_TILES):
+% for nt in range(nn):
+% for mt in range(m_tiles):
+<%
+    pm = f'pm_{mt}' if pm_runtime(mt) else None
+    pvc0 = f'pvalid_c0col_{nt}' if not n_col_aligned else None
+    pvc1 = f'pvalid_c1col_{nt}' if not n_col_aligned else None
+%>
     {
         .reg .u64 caddr;
-        .reg .pred p0, p1;
-        add.u64  caddr, c_thr_base, ${mt * C_MTILE_STRIDE + nt * C_NTILE_STRIDE};
-        and.pred p0, pm_${mt}, pvalid_c0col_${nt};
-        and.pred p1, pm_${mt}, pvalid_c1col_${nt};
-        @p0 st.global.f64 [caddr],     c0_${nt}_${mt};
-        @p1 st.global.f64 [caddr + 8], c1_${nt}_${mt};
+        add.u64  caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
+        ${pred_emit(f'st.global.f64 [caddr], c0_{nt}_{mt};', pm, pvc0, pred_reg=f'p0s_{nt}_{mt}')}
+        ${pred_emit(f'st.global.f64 [caddr + 8], c1_{nt}_{mt};', pm, pvc1, pred_reg=f'p1s_{nt}_{mt}')}
     }
 % endfor
 % endfor
+
+% if bs:
+$L_STEAL:
+    // Root issues async try_cancel + waits; bar.sync orders the workid load
+    @!p_root bra $L_AFTER_WAIT;
+    {
+        .reg .u64 state;
+        mbarrier.arrive.expect_tx.shared::cta.b64 state, [mbar_a], 16;
+        clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.b128 [work_a], [mbar_a];
+$L_WAIT:
+        mbarrier.try_wait.shared::cta.b64 p_done, [mbar_a], state, 10000000;
+        @!p_done bra $L_WAIT;
+    }
+$L_AFTER_WAIT:
+    bar.sync 0;
+
+    {
+        .reg .b128 resp;
+        ld.shared::cta.b128 resp, [work_a];
+        clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 p_have, resp;
+        @!p_have bra $L_FIN;
+        // 1D grid: extract just x
+        clusterlaunchcontrol.query_cancel.get_first_ctaid::x.b32.b128 ctaid, resp;
+    }
+    bra.uni $L_LOOP;
+
+$L_FIN:
+    bar.sync 0;
+    @p_root mbarrier.inval.shared::cta.b64 [mbar_a];
+% endif
 
 $L_EXIT:
     ret;
