@@ -12,6 +12,28 @@ class PTXMatMul(MatMul):
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0,
                 'dynamic_shared': 0}
 
+    @staticmethod
+    def is_sparse_suitable(arr):
+        nnz = int(np.count_nonzero(arr))
+        nuq = int(len(np.unique(np.abs(arr))))
+        density = nnz / arr.size
+        return (nuq <= 28) or (density <= 0.15)
+
+    @staticmethod
+    def is_dense_suitable(arr, dtype, cc):
+        """True if A's shape and the target arch support the dense DMMA
+        template family.  Does NOT check runtime args (n, ldb, ldc); those
+        are validated when the generator runs."""
+        return (np.dtype(dtype) == np.float64
+                and cc is not None and cc >= (9, 0)
+                and arr.shape[0] <= 128 and arr.shape[1] <= 128)
+
+    @classmethod
+    def is_suitable(cls, arr, dtype, cc):
+        """True if either sparse or dense templates are applicable."""
+        return (cls.is_sparse_suitable(arr)
+                or cls.is_dense_suitable(arr, dtype, cc))
+
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
                            trim_a=False):
         base_args = {'cc': compute_capability,
@@ -22,11 +44,7 @@ class PTXMatMul(MatMul):
         yield from self._dense_kernel_generators(dtype, dsize, base_args)
 
     def _sparse_kernel_generators(self, dtype, dsize, base_args):
-        arr = self.A
-        nnz = int(np.count_nonzero(arr))
-        nuq = int(len(np.unique(np.abs(arr))))
-        density = nnz / arr.size
-        if not ((nuq <= 28) or (density <= 0.15)):
+        if not self.is_sparse_suitable(self.A):
             return
 
         # B loading, C streaming kernel
@@ -80,8 +98,8 @@ class PTXMatMul(MatMul):
 
     def _dense_kernel_generators(self, dtype, dsize, base_args):
         cc = base_args['cc'] or (0, 0)
-        if not (dtype == 'double' and cc >= (9, 0) and self.n is not None
-                and self.m <= 128 and self.k <= 128):
+        if not (self.is_dense_suitable(self.A, dtype, cc)
+                and self.n is not None):
             return
 
         # Dense DMMA m8n8k4; block stealing default on sm_100+ for gA
@@ -108,6 +126,94 @@ class PTXMatMul(MatMul):
                 'desc': f'{tpl}/nn{nn}-w{w}{"-bs" if bs else ""}',
             }
             yield (tpl, args, meta)
+
+        # Warp-specialised dense DMMA with TMA B-load + TMA C-store.
+        if cc >= (10, 0):
+            yield from self._dense_ws_kernel_generators(dtype, dsize, base_args)
+
+    def _dense_ws_kernel_generators(self, dtype, dsize, base_args):
+        m_pad = -(-self.m // 8) * 8
+        k_pad = -(-self.k // 4) * 4
+        # (nn, w_compute) -- block has w_compute + 2 warps (producer, stealer)
+        ws_configs = [(1, 4), (2, 4), (4, 4)]
+        for nn, w in ws_configs:
+            n_per_cta = 8 * nn * w
+            if n_per_cta > self.n:
+                continue
+            blkx = 32 * (w + 2)
+            setup = self._dense_mma_setup(nn=nn, warps_per_cta=w)
+            ws_layout = self._dense_ws_layout(
+                n_comp_warps=w, n_per_cta=n_per_cta,
+                m_pad=m_pad, k_pad=k_pad, a_elems=setup['a_elems']
+            )
+            # sm_100 supports up to 228 KiB shared per CTA with the
+            # set_shared_size opt-in.  Reserve some headroom for L1 carveout.
+            if ws_layout['dynm_total_bytes'] > 200 * 1024:
+                continue
+            args = (base_args
+                    | {'warps_per_cta': w, 'nn': nn}
+                    | setup | ws_layout)
+            yield ('dense-mma-ws', args, {
+                'block': (blkx, 1, 1),
+                'grid': (-(-self.n // n_per_cta), 1, 1),
+                'desc': f'dense-mma-ws/nn{nn}-w{w}',
+                'ws_tensor_map': True,
+                'ws_n_per_cta': n_per_cta,
+                'ws_k_pad': k_pad,
+                'ws_m_pad': m_pad,
+                'dynamic_shared': ws_layout['dynm_total_bytes'],
+            })
+
+    @staticmethod
+    def _dense_ws_layout(*, n_comp_warps, n_per_cta, m_pad, k_pad, a_elems):
+        """Render-time constants for the dense-mma-ws template: warp roles,
+        cooperative-copy iteration counts, smem-tile sizes, mbar timeout,
+        and dynamic-shared byte offsets for each buffer."""
+        n_total_warps   = n_comp_warps + 2
+        blockx_total    = 32 * n_total_warps
+        a_pairs         = a_elems // 2
+        a_pairs_tail    = a_elems % 2
+
+        b_tile_bytes = k_pad * n_per_cta * 8
+        c_tile_bytes = m_pad * n_per_cta * 8
+        a_bytes      = a_elems * 8
+
+        smem_size = {'b1': b_tile_bytes, 'b2': b_tile_bytes, 'c': c_tile_bytes,
+                     'a': a_bytes, 'wid': 16}
+        smem_off, off = {}, 0
+        for k, v in smem_size.items():
+            off = (off + 15) & ~15
+            smem_off[f'{k}_off'] = off
+            off += v
+
+        mbar_names = ('tma', 'bready', 'cready', 'cstored',
+                      'steal', 'wid_new', 'wid_used')
+        for k in mbar_names:
+            smem_off[f'{k}_mbar_off'] = off
+            off += 8
+
+        # Pad total to 16-byte multiple
+        dynm_total_bytes = (off + 15) & ~15
+
+        params = {'n_comp_warps': n_comp_warps,
+                  'blockx_total': blockx_total,
+                  'prod_warp': n_comp_warps,
+                  'steal_warp': n_comp_warps + 1,
+                  'comp_threads': 32 * n_comp_warps,
+                  'a_pairs': a_pairs,
+                  'a_pairs_tail': a_pairs_tail,
+                  'copy_v2_iters': -(-a_pairs // blockx_total),
+                  'm_pad': m_pad,
+                  'k_pad': k_pad,
+                  'b_tile_doubles': k_pad * n_per_cta,
+                  'b_tile_bytes': b_tile_bytes,
+                  'c_tile_doubles': m_pad * n_per_cta,
+                  'c_mtile_smem_stride': 8 * n_per_cta * 8,
+                  'c_ntile_smem_stride': 8 * 8,
+                  'dynm_total_bytes': dynm_total_bytes,
+                  }
+        params |= smem_off
+        return params
 
     def _dense_mma_setup(self, *, nn, warps_per_cta):
         a = self.A
