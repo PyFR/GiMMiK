@@ -1,9 +1,9 @@
 <%inherit file='base'/>
 
 <%
-pftype = "f32" if dtype == "float" else "f64"
-dwidth_i = 4 if dtype == "float" else 8
-fzero = "0f00000000" if dtype == "float" else "0d0000000000000000"
+pftype = 'f32' if dtype == 'float' else 'f64'
+dwidth_i = 4 if dtype == 'float' else 8
+fzero = '0f00000000' if dtype == 'float' else '0d0000000000000000'
 kparts = partition(A, ksplit, by='cols')
 cchunks = chunk(list(range(m)), csz)
 cv_per_thread = -(-csz // ksplit)

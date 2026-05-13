@@ -19,26 +19,21 @@ class PTXMatMul(MatMul):
         density = nnz / arr.size
         return (nuq <= 28) or (density <= 0.15)
 
+    # Shape/arch gate for dense DMMA; n/ldb/ldc are validated at generate time
     @staticmethod
     def is_dense_suitable(arr, dtype, cc):
-        """True if A's shape and the target arch support the dense DMMA
-        template family.  Does NOT check runtime args (n, ldb, ldc); those
-        are validated when the generator runs."""
         return (np.dtype(dtype) == np.float64
                 and cc is not None and cc >= (9, 0)
                 and arr.shape[0] <= 128 and arr.shape[1] <= 128)
 
     @classmethod
     def is_suitable(cls, arr, dtype, cc):
-        """True if either sparse or dense templates are applicable."""
         return (cls.is_sparse_suitable(arr)
                 or cls.is_dense_suitable(arr, dtype, cc))
 
-    def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
-                           trim_a=False):
+    def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
         base_args = {'cc': compute_capability,
-                     'pred_emit': self._pred_emit,
-                     'trim_a': bool(trim_a) and dtype == 'double'}
+                     'pred_emit': self._pred_emit}
 
         yield from self._sparse_kernel_generators(dtype, dsize, base_args)
         yield from self._dense_kernel_generators(dtype, dsize, base_args)
@@ -48,10 +43,10 @@ class PTXMatMul(MatMul):
             return
 
         # B loading, C streaming kernel
-        yield ('cstream', base_args | {}, {'desc': 'cstream'})
+        yield ('cstream', base_args, {'desc': 'cstream'})
 
         # B streaming, C accumulation kernel
-        yield ('bstream', base_args | {}, {'desc': 'bstream'})
+        yield ('bstream', base_args, {'desc': 'bstream'})
 
         # Four-way m-split B streaming, C accumulation kernel
         ms, bsz, blkx = 4, 24, 32
@@ -102,15 +97,22 @@ class PTXMatMul(MatMul):
                 and self.n is not None):
             return
 
-        # Dense DMMA m8n8k4; block stealing default on sm_100+ for gA
+        # Some kernels can optional steal blocks
         bs_default = cc >= (10, 0)
-        dense_configs = [
-            ('dense-mma-smem-gA', 1, 8),
-            ('dense-mma-smem-gA', 2, 4),
-            ('dense-mma-smem-gA', 4, 4),
-            ('dense-mma-gAd',     2, 2),
-            ('dense-mma-gAd',     4, 2),
-        ]
+
+        if cc >= (10, 0):
+            # Warp specialised is uniformly better on sm_100+, so no need to JIT
+            # other versions
+            dense_configs = [('dense-mma-smem-gA', 4, 4)]
+        else:
+            dense_configs = [
+                ('dense-mma-smem-gA', 1, 8),
+                ('dense-mma-smem-gA', 2, 4),
+                ('dense-mma-smem-gA', 4, 4),
+                ('dense-mma-gAd',     2, 2),
+                ('dense-mma-gAd',     4, 2),
+            ]
+
         for tpl, nn, w in dense_configs:
             blkx = 32 * w
             n_per_cta = 8 * nn * w
@@ -127,13 +129,14 @@ class PTXMatMul(MatMul):
             }
             yield (tpl, args, meta)
 
-        # Warp-specialised dense DMMA with TMA B-load + TMA C-store.
+        # Warp-specialised dense DMMA
         if cc >= (10, 0):
             yield from self._dense_ws_kernel_generators(dtype, dsize, base_args)
 
     def _dense_ws_kernel_generators(self, dtype, dsize, base_args):
         m_pad = -(-self.m // 8) * 8
         k_pad = -(-self.k // 4) * 4
+
         # (nn, w_compute) -- block has w_compute + 2 warps (producer, stealer)
         ws_configs = [(1, 4), (2, 4), (4, 4)]
         for nn, w in ws_configs:
@@ -146,14 +149,14 @@ class PTXMatMul(MatMul):
                 n_comp_warps=w, n_per_cta=n_per_cta,
                 m_pad=m_pad, k_pad=k_pad, a_elems=setup['a_elems']
             )
-            # sm_100 supports up to 228 KiB shared per CTA with the
-            # set_shared_size opt-in.  Reserve some headroom for L1 carveout.
+
             if ws_layout['dynm_total_bytes'] > 200 * 1024:
                 continue
+
             args = (base_args
                     | {'warps_per_cta': w, 'nn': nn}
                     | setup | ws_layout)
-            yield ('dense-mma-ws', args, {
+            meta = {
                 'block': (blkx, 1, 1),
                 'grid': (-(-self.n // n_per_cta), 1, 1),
                 'desc': f'dense-mma-ws/nn{nn}-w{w}',
@@ -162,17 +165,13 @@ class PTXMatMul(MatMul):
                 'ws_k_pad': k_pad,
                 'ws_m_pad': m_pad,
                 'dynamic_shared': ws_layout['dynm_total_bytes'],
-            })
+            }
+            yield ('dense-mma-ws', args, meta)
 
     @staticmethod
     def _dense_ws_layout(*, n_comp_warps, n_per_cta, m_pad, k_pad, a_elems):
-        """Render-time constants for the dense-mma-ws template: warp roles,
-        cooperative-copy iteration counts, smem-tile sizes, mbar timeout,
-        and dynamic-shared byte offsets for each buffer."""
         n_total_warps   = n_comp_warps + 2
         blockx_total    = 32 * n_total_warps
-        a_pairs         = a_elems // 2
-        a_pairs_tail    = a_elems % 2
 
         b_tile_bytes = k_pad * n_per_cta * 8
         c_tile_bytes = m_pad * n_per_cta * 8
@@ -200,9 +199,6 @@ class PTXMatMul(MatMul):
                   'prod_warp': n_comp_warps,
                   'steal_warp': n_comp_warps + 1,
                   'comp_threads': 32 * n_comp_warps,
-                  'a_pairs': a_pairs,
-                  'a_pairs_tail': a_pairs_tail,
-                  'copy_v2_iters': -(-a_pairs // blockx_total),
                   'm_pad': m_pad,
                   'k_pad': k_pad,
                   'b_tile_doubles': k_pad * n_per_cta,

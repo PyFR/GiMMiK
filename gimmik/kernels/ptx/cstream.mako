@@ -1,13 +1,13 @@
 <%inherit file='base'/>
 
 <%
-pftype = "f32" if dtype == "float" else "f64"
-dwidth_i = 4 if dtype == "float" else 8
-fzero = "0f00000000" if dtype == "float" else "0d0000000000000000"
+pftype = 'f32' if dtype == 'float' else 'f64'
+dwidth_i = 4 if dtype == 'float' else 8
+fzero = '0f00000000' if dtype == 'float' else '0d0000000000000000'
 bix_list = list(bix)
 bix_pos = {kx: i for i, kx in enumerate(bix_list)}
-K_used = len(bix_list)
-row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0] for j in range(m)]
+row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0]
+          for j in range(m)]
 %>
 
 % if n is None:
@@ -27,7 +27,7 @@ row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0] for j in range(m)
 % endif
     .reg .u32 n, id;
     .reg .u64 b, c, b_base, c_base;
-    .reg .${pftype} bv<${K_used}>, dotp;
+    .reg .${pftype} bv<${len(bix_list)}>, dotp;
     .reg .pred p1;
 
 % if n is None:
@@ -60,7 +60,7 @@ row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0] for j in range(m)
     }
 
 ## Batch-load active B columns
-%for i, kx in enumerate(bix_list):
+% for i, kx in enumerate(bix_list):
 % if n is None:
     {
     .reg .u32 _boff;
@@ -72,18 +72,18 @@ row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0] for j in range(m)
 % else:
     ld.global.nc.${pftype} bv${i}, [b_base + ${ldb*kx*dwidth_i}];
 % endif
-%endfor
+% endfor
 
 ## Compute and store each output row
-%for j in range(m):
-%  if row_nz[j]:
-%   for i_nz, (kx, jx) in enumerate(row_nz[j]):
-%    if i_nz == 0:
+% for j in range(m):
+%   if row_nz[j]:
+%     for i_nz, (kx, jx) in enumerate(row_nz[j]):
+%       if i_nz == 0:
     mul.${pftype} dotp, bv${bix_pos[kx]}, ${jx};
-%    else:
+%       else:
     fma.rn.${pftype} dotp, bv${bix_pos[kx]}, ${jx}, dotp;
-%    endif
-%   endfor
+%       endif
+%     endfor
 % if beta == 0:
 % if n is None:
     {
@@ -115,7 +115,7 @@ row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0] for j in range(m)
     }
 % endif
 
-%  else:
+%   else:
 ## Zero row of A
 % if beta == 0:
     {
@@ -149,8 +149,8 @@ row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0] for j in range(m)
 % endif
     }
 % endif
-%  endif
-%endfor
+%   endif
+% endfor
 
 $L_EXIT:
     ret;

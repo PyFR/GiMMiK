@@ -1,14 +1,12 @@
 <%inherit file='base'/>
 
 <%
-assert dtype == "double"
-assert n is not None and ldb is not None and ldc is not None
 # Cooperative-copy params (gA-only)
 blockx        = 32 * warps_per_cta
 a_pairs       = a_elems // 2
 a_pairs_tail  = a_elems % 2
 copy_v2_iters = (a_pairs + blockx - 1) // blockx
-bs = bool(context.get('block_stealing', False))
+bs = bool(block_stealing)
 %>
 
 % if bs:

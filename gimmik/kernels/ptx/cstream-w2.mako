@@ -1,15 +1,13 @@
 <%inherit file='base'/>
 
 <%
-pftype = "f64"
+pftype = 'f64'
 dwidth_i = 8
-fzero = "0d0000000000000000"
+fzero = '0d0000000000000000'
 bix_list = list(bix)
 bix_pos = {kx: i for i, kx in enumerate(bix_list)}
-K_used = len(bix_list)
-row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0] for j in range(m)]
-assert dtype == 'double', 'cstream-w2 is double-precision only'
-assert n is not None, 'cstream-w2 requires compile-time n'
+row_nz = [[(kx, A[j, kx]) for kx in range(k) if A[j, kx] != 0]
+          for j in range(m)]
 %>
 
 .visible .entry ${kname}(.param .u64 _b,
@@ -17,7 +15,7 @@ assert n is not None, 'cstream-w2 requires compile-time n'
 {
     .reg .u32 n, id;
     .reg .u64 b, c, b_base, c_base;
-    .reg .f64 bv_a<${K_used}>, bv_b<${K_used}>, dotp_a, dotp_b;
+    .reg .f64 bv_a<${len(bix_list)}>, bv_b<${len(bix_list)}>, dotp_a, dotp_b;
     .reg .pred p1;
 
     mov.u32 n, ${-(-n // 2)};
@@ -45,22 +43,22 @@ assert n is not None, 'cstream-w2 requires compile-time n'
     }
 
 ## Batch-load B column pairs
-%for i, kx in enumerate(bix_list):
+% for i, kx in enumerate(bix_list):
     ld.global.nc.v2.f64 {bv_a${i}, bv_b${i}}, [b_base + ${ldb*kx*dwidth_i}];
-%endfor
+% endfor
 
 ## Main compute: two parallel dot-product streams per thread
-%for j in range(m):
-%  if row_nz[j]:
-%   for i_nz, (kx, jx) in enumerate(row_nz[j]):
-%    if i_nz == 0:
+% for j in range(m):
+%   if row_nz[j]:
+%     for i_nz, (kx, jx) in enumerate(row_nz[j]):
+%       if i_nz == 0:
     mul.f64 dotp_a, bv_a${bix_pos[kx]}, ${jx};
     mul.f64 dotp_b, bv_b${bix_pos[kx]}, ${jx};
-%    else:
+%       else:
     fma.rn.f64 dotp_a, bv_a${bix_pos[kx]}, ${jx}, dotp_a;
     fma.rn.f64 dotp_b, bv_b${bix_pos[kx]}, ${jx}, dotp_b;
-%    endif
-%   endfor
+%       endif
+%     endfor
 % if beta == 0:
     st.weak.global.cg.v2.f64 [c_base + ${ldc*j*dwidth_i}], {dotp_a, dotp_b};
 % else:
@@ -73,7 +71,7 @@ assert n is not None, 'cstream-w2 requires compile-time n'
     }
 % endif
 
-%  else:
+%   else:
 ## Zero row of A
 % if beta == 0:
     {
@@ -90,8 +88,8 @@ assert n is not None, 'cstream-w2 requires compile-time n'
     st.global.v2.f64 [c_base + ${ldc*j*dwidth_i}], {_ca, _cb};
     }
 % endif
-%  endif
-%endfor
+%   endif
+% endfor
 
 $L_EXIT:
     ret;

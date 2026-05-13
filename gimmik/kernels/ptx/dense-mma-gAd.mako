@@ -1,8 +1,7 @@
 <%inherit file='base'/>
 
 <%
-assert dtype == "double"
-assert n is not None and ldb is not None and ldc is not None
+fzero = '0d0000000000000000'
 %>
 
 .global .align 16 .b64 ${kname}_Ag[${a_elems}] = {
@@ -107,8 +106,8 @@ assert n is not None and ldb is not None and ldc is not None
 % for nt in range(nn):
 % for mt in range(m_tiles):
 % if beta == 0:
-    mov.f64 c0_${nt}_${mt}, 0d0000000000000000;
-    mov.f64 c1_${nt}_${mt}, 0d0000000000000000;
+    mov.f64 c0_${nt}_${mt}, ${fzero};
+    mov.f64 c1_${nt}_${mt}, ${fzero};
 % else:
 <%
     pm = f'pm_{mt}' if pm_runtime(mt) else None
@@ -120,8 +119,8 @@ assert n is not None and ldb is not None and ldc is not None
         .reg .u64 caddr;
         add.u64      caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
 % if needs_zero_init:
-        mov.f64      c0_${nt}_${mt}, 0d0000000000000000;
-        mov.f64      c1_${nt}_${mt}, 0d0000000000000000;
+        mov.f64      c0_${nt}_${mt}, ${fzero};
+        mov.f64      c1_${nt}_${mt}, ${fzero};
 % endif
         ${pred_emit(f'ld.global.f64 c0_{nt}_{mt}, [caddr];', pm, pvc0, pred_reg=f'p0_{nt}_{mt}')}
         ${pred_emit(f'ld.global.f64 c1_{nt}_{mt}, [caddr + 8];', pm, pvc1, pred_reg=f'p1_{nt}_{mt}')}
@@ -142,7 +141,7 @@ assert n is not None and ldb is not None and ldc is not None
         .reg .u64 baddr;
         add.u64 baddr, b_thr_base, ${ki * b_kiter_stride + nt * b_ntile_stride};
 % if needs_zero:
-        mov.f64 b_frag_${nt}, 0d0000000000000000;
+        mov.f64 b_frag_${nt}, ${fzero};
 % endif
 % if k_tail:
         .reg .pred pbrow;

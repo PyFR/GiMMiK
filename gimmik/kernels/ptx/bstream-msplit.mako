@@ -1,14 +1,13 @@
 <%inherit file='base'/>
 
 <%
-pftype = "f32" if dtype == "float" else "f64"
-dwidth_i = 4 if dtype == "float" else 8
-fzero = "0f00000000" if dtype == "float" else "0d0000000000000000"
+pftype = 'f32' if dtype == 'float' else 'f64'
+dwidth_i = 4 if dtype == 'float' else 8
+fzero = '0f00000000' if dtype == 'float' else '0d0000000000000000'
 has_zero_rows = any(jx == -1 for jx in afix)
 mx = partition(A, into=msplit, by='rows')
 bix_list = list(bix)
 bchunks = chunk(bix_list, bsz)
-nchunks = len(bchunks)
 m_per_group = max(len(mcx) for mcx in mx)
 bsub_bytes = 2 * bsz * blockx * dwidth_i
 def bsub_off(buf, idx):
@@ -135,11 +134,11 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
 % endif
 
 ## Main loop over B-chunks (double-buffered)
-%   for bb in range(nchunks):
+%   for bb in range(len(bchunks)):
 <%
         buf_cur = bb % 2
         buf_next = (bb + 1) % 2
-        is_last = (bb == nchunks - 1)
+        is_last = (bb == len(bchunks) - 1)
 %>
 %     if not is_last:
 %       for idx, kx in enumerate(bchunks[bb + 1]):
@@ -232,6 +231,7 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
 % endif
     bar.sync 0;
 %   endfor
+## End of Main loop over B-chunks
 
 ## Handle zero rows in this cid's group
 %   if has_zero_rows:

@@ -1,14 +1,12 @@
 <%inherit file='base'/>
 
 <%
-pftype = "f32" if dtype == "float" else "f64"
-dwidth_i = 4 if dtype == "float" else 8
-fzero = "0f00000000" if dtype == "float" else "0d0000000000000000"
+pftype = 'f32' if dtype == 'float' else 'f64'
+dwidth_i = 4 if dtype == 'float' else 8
+fzero = '0f00000000' if dtype == 'float' else '0d0000000000000000'
 has_zero_rows = any(jx == -1 for jx in afix)
 bix_list = list(bix)
-bix_idx = {kx: i for i, kx in enumerate(bix_list)}
-preload_c = beta != 0
-need_scale = beta != 0 and beta != 1
+bix_pos = {kx: i for i, kx in enumerate(bix_list)}
 %>
 
 % if n is None:
@@ -61,7 +59,7 @@ need_scale = beta != 0 and beta != 1
     }
 
 ## Batch-load active B columns
-%for i, kx in enumerate(bix_list):
+% for i, kx in enumerate(bix_list):
 % if n is None:
     {
     .reg .u32 _boff;
@@ -73,9 +71,9 @@ need_scale = beta != 0 and beta != 1
 % else:
     ld.weak.global.cg.${pftype} bv${i}, [b_base + ${ldb*kx*dwidth_i}];
 % endif
-%endfor
+% endfor
 
-% if preload_c:
+% if beta != 0:
 ## Pre-load C so per-row completion is a plain store
 %  for j in range(m):
 %   if afix[j] != -1:
@@ -92,7 +90,7 @@ need_scale = beta != 0 and beta != 1
 % endif
 %   endif
 %  endfor
-% if need_scale:
+% if beta != 0 and beta != 1:
 %  for j in range(m):
 %   if afix[j] != -1:
     mul.${pftype} csub${j}, csub${j}, ${float(beta)};
@@ -102,15 +100,15 @@ need_scale = beta != 0 and beta != 1
 % endif
 
 ## Main compute
-%for kx in bix_list:
-%  for j, jx in enumerate(A[:, kx]):
-%    if jx != 0:
-%      if preload_c:
-    fma.rn.${pftype} csub${j}, bv${bix_idx[kx]}, ${jx}, csub${j};
+% for kx in bix_list:
+%   for j, jx in enumerate(A[:, kx]):
+%     if jx != 0:
+%       if preload_c:
+    fma.rn.${pftype} csub${j}, bv${bix_pos[kx]}, ${jx}, csub${j};
 %      elif kx == afix[j]:
-    mul.${pftype} csub${j}, bv${bix_idx[kx]}, ${jx};
+    mul.${pftype} csub${j}, bv${bix_pos[kx]}, ${jx};
 %      else:
-    fma.rn.${pftype} csub${j}, bv${bix_idx[kx]}, ${jx}, csub${j};
+    fma.rn.${pftype} csub${j}, bv${bix_pos[kx]}, ${jx}, csub${j};
 %      endif
 %    endif
 %    if kx == alix[j]:
@@ -126,9 +124,9 @@ need_scale = beta != 0 and beta != 1
     st.weak.global.cg.${pftype} [c_base + ${ldc*j*dwidth_i}], csub${j};
 % endif
 
-%    endif
-%  endfor
-%endfor
+%     endif
+%   endfor
+% endfor
 
 % if has_zero_rows:
     {
