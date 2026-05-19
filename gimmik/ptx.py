@@ -12,35 +12,53 @@ class PTXMatMul(MatMul):
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0,
                 'dynamic_shared': 0}
 
-    @staticmethod
-    def is_sparse_suitable(arr):
+    DENSE_SMEM_MAX = 200*1024
+    PTX_SM = {(8, 0), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)}
+
+    @classmethod
+    def is_sparse_suitable(cls, arr, cc):
         nnz = int(np.count_nonzero(arr))
         nuq = int(len(np.unique(np.abs(arr))))
         density = nnz / arr.size
-        return (nuq <= 28) or (density <= 0.15)
+        return ((nuq <= 28) or (density <= 0.15)) and cc in cls.PTX_SM
 
-    # Shape/arch gate for dense DMMA; n/ldb/ldc are validated at generate time
-    @staticmethod
-    def is_dense_suitable(arr, dtype, cc):
-        return (np.dtype(dtype) == np.float64
-                and cc is not None and cc >= (9, 0)
+    @classmethod
+    def is_dense_suitable(cls, arr, cc):
+        cc_appropriate = cc in cls.PTX_SM and cc >= (9, 0)
+        return (arr.dtype == np.float64 and cc_appropriate
                 and arr.shape[0] <= 128 and arr.shape[1] <= 128)
 
     @classmethod
-    def is_suitable(cls, arr, dtype, cc):
-        return (cls.is_sparse_suitable(arr)
-                or cls.is_dense_suitable(arr, dtype, cc))
+    def is_suitable(cls, arr, cc):
+        return cls.is_sparse_suitable(arr, cc) or cls.is_dense_suitable(arr, cc)
 
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
-        base_args = {'cc': compute_capability,
-                     'pred_emit': self._pred_emit}
+        cc = compute_capability or (0, 0)
+        base_args = {'cc': cc,
+                     'pred_emit': self._pred_emit,
+                     'pftype': 'f32' if dtype == 'float' else 'f64',
+                     'dwidth_i': 4 if dtype == 'float' else 8,
+                     'fzero': ('0f00000000' if dtype == 'float'
+                         else '0d0000000000000000'),
+                     'beta_zero': self.beta == 0,
+                     'mbar_maxwait': '0x989680'
+                    }
 
-        yield from self._sparse_kernel_generators(dtype, dsize, base_args)
-        yield from self._dense_kernel_generators(dtype, dsize, base_args)
+        if self.is_sparse_suitable(self.A, cc):
+            yield from self._sparse_kernel_generators(dtype, dsize, base_args)
+
+        if self.is_dense_suitable(self.A, cc):
+            yield from self._dense_kernel_generators(dtype, dsize, base_args)
 
     def _sparse_kernel_generators(self, dtype, dsize, base_args):
-        if not self.is_sparse_suitable(self.A):
-            return
+        # Sparse-shared template constants
+        base_args = base_args | {
+            'bix_list': list(self.bix),
+            'bix_pos': self.bix,
+            'has_zero_rows': bool(self.has_zero_rows),
+            'row_nz': [[(kx, self.A[j, kx]) for kx in range(self.k)
+                        if self.A[j, kx] != 0] for j in range(self.m)],
+        }
 
         # B loading, C streaming kernel
         yield ('cstream', base_args, {'desc': 'cstream'})
@@ -93,145 +111,124 @@ class PTXMatMul(MatMul):
 
     def _dense_kernel_generators(self, dtype, dsize, base_args):
         cc = base_args['cc'] or (0, 0)
-        if not (self.is_dense_suitable(self.A, dtype, cc)
-                and self.n is not None):
-            return
 
-        # Some kernels can optional steal blocks
-        bs_default = cc >= (10, 0)
-
-        if cc >= (10, 0):
-            # Warp specialised is uniformly better on sm_100+, so no need to JIT
-            # other versions
+        # Block stealing requires sm_100+
+        block_steal = cc >= (10, 0)
+        if block_steal:
             dense_configs = [('dense-mma-smem-gA', 4, 4)]
         else:
             dense_configs = [
                 ('dense-mma-smem-gA', 1, 8),
                 ('dense-mma-smem-gA', 2, 4),
                 ('dense-mma-smem-gA', 4, 4),
-                ('dense-mma-gAd',     2, 2),
-                ('dense-mma-gAd',     4, 2),
+                ('dense-mma-gAd', 2, 2),
+                ('dense-mma-gAd', 4, 2),
             ]
 
         for tpl, nn, w in dense_configs:
             blkx = 32 * w
-            n_per_cta = 8 * nn * w
-            if n_per_cta > self.n:
+            if (n_per_cta := 8 * nn * w) > self.n:
                 continue
-            bs = (tpl == 'dense-mma-smem-gA') and bs_default
             setup = self._dense_mma_setup(nn=nn, warps_per_cta=w)
             args = (base_args | {'warps_per_cta': w, 'nn': nn,
-                                 'block_stealing': bs} | setup)
+                                 'block_stealing': block_steal} | setup)
             meta = {
                 'block': (blkx, 1, 1),
                 'grid': (-(-self.n // n_per_cta), 1, 1),
-                'desc': f'{tpl}/nn{nn}-w{w}{"-bs" if bs else ""}',
+                'desc': f'{tpl}/nn{nn}-w{w}{'-bs' if block_steal else ''}',
             }
             yield (tpl, args, meta)
 
-        # Warp-specialised dense DMMA
-        if cc >= (10, 0):
+        # Warp-specialised dense DMMA, required block stealing
+        if block_steal:
             yield from self._dense_ws_kernel_generators(dtype, dsize, base_args)
 
     def _dense_ws_kernel_generators(self, dtype, dsize, base_args):
-        m_pad = -(-self.m // 8) * 8
-        k_pad = -(-self.k // 4) * 4
-
-        # (nn, w_compute) -- block has w_compute + 2 warps (producer, stealer)
+        # (nn, compute) -- block has compute + 2 warps (producer, stealer)
         ws_configs = [(1, 4), (2, 4), (4, 4)]
         for nn, w in ws_configs:
-            n_per_cta = 8 * nn * w
-            if n_per_cta > self.n:
+            if (n_per_cta := 8 * nn * w) > self.n:
                 continue
-            blkx = 32 * (w + 2)
+
             setup = self._dense_mma_setup(nn=nn, warps_per_cta=w)
-            ws_layout = self._dense_ws_layout(
-                n_comp_warps=w, n_per_cta=n_per_cta,
-                m_pad=m_pad, k_pad=k_pad, a_elems=setup['a_elems']
-            )
+            ws_setup = self._dense_ws_setup(setup, n_comp_warps=w)
 
-            if ws_layout['dynm_total_bytes'] > 200 * 1024:
+            if ws_setup['dynm_total_bytes'] > self.DENSE_SMEM_MAX:
                 continue
 
-            args = (base_args
-                    | {'warps_per_cta': w, 'nn': nn}
-                    | setup | ws_layout)
+            args = base_args | {'nn': nn} | setup | ws_setup
             meta = {
-                'block': (blkx, 1, 1),
+                'block': (32 * (w + 2), 1, 1),
                 'grid': (-(-self.n // n_per_cta), 1, 1),
                 'desc': f'dense-mma-ws/nn{nn}-w{w}',
-                'ws_tensor_map': True,
-                'ws_n_per_cta': n_per_cta,
-                'ws_k_pad': k_pad,
-                'ws_m_pad': m_pad,
-                'dynamic_shared': ws_layout['dynm_total_bytes'],
+                'ws_b_tile': (n_per_cta, setup['k_pad']),
+                'dynamic_shared': ws_setup['dynm_total_bytes'],
             }
+            if self.beta != 0:
+                meta |= {'ws_out_tile': (n_per_cta, setup['m_pad'])}
             yield ('dense-mma-ws', args, meta)
 
     @staticmethod
-    def _dense_ws_layout(*, n_comp_warps, n_per_cta, m_pad, k_pad, a_elems):
-        n_total_warps   = n_comp_warps + 2
-        blockx_total    = 32 * n_total_warps
-
-        b_tile_bytes = k_pad * n_per_cta * 8
-        c_tile_bytes = m_pad * n_per_cta * 8
-        a_bytes      = a_elems * 8
-
-        smem_size = {'b1': b_tile_bytes, 'b2': b_tile_bytes, 'c': c_tile_bytes,
-                     'a': a_bytes, 'wid': 16}
-        smem_off, off = {}, 0
-        for k, v in smem_size.items():
-            off = (off + 15) & ~15
-            smem_off[f'{k}_off'] = off
-            off += v
-
-        mbar_names = ('tma', 'bready', 'cready', 'cstored',
-                      'steal', 'wid_new', 'wid_used')
-        for k in mbar_names:
-            smem_off[f'{k}_mbar_off'] = off
+    def _dsmem_alloc(regions, mbars, align=16):
+        out, off = {}, 0
+        for name, size in regions:
+            off = (off + align - 1) & ~(align - 1)
+            out[f'{name}_off'] = off
+            off += size
+        for name in mbars:
+            out[f'{name}_mbar_off'] = off
             off += 8
+        total = (off + align - 1) & ~(align - 1)
+        return out, total
 
-        # Pad total to 16-byte multiple
-        dynm_total_bytes = (off + 15) & ~15
+    @classmethod
+    def _dense_ws_setup(cls, setup, *, n_comp_warps):
+        n_per_cta = setup['n_per_cta']
+        b_tile_bytes = setup['k_pad'] * n_per_cta * 8
+        c_tile_bytes = setup['m_pad'] * n_per_cta * 8
+        a_bytes = setup['a_elems'] * 8
 
-        params = {'n_comp_warps': n_comp_warps,
-                  'blockx_total': blockx_total,
-                  'prod_warp': n_comp_warps,
-                  'steal_warp': n_comp_warps + 1,
-                  'comp_threads': 32 * n_comp_warps,
-                  'm_pad': m_pad,
-                  'k_pad': k_pad,
-                  'b_tile_doubles': k_pad * n_per_cta,
-                  'b_tile_bytes': b_tile_bytes,
-                  'c_tile_doubles': m_pad * n_per_cta,
-                  'c_mtile_smem_stride': 8 * n_per_cta * 8,
-                  'c_ntile_smem_stride': 8 * 8,
-                  'dynm_total_bytes': dynm_total_bytes,
-                  }
-        params |= smem_off
-        return params
+        regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
+                   ('c', c_tile_bytes), ('a', a_bytes), ('wid', 16)]
+        mbars = ('tma', 'bready', 'cready', 'cstored',
+                 'steal', 'wid_new', 'wid_used')
+        offsets, dynm_total_bytes = cls._dsmem_alloc(regions, mbars)
+
+        return offsets | {
+            'n_comp_warps': n_comp_warps,
+            'blockx_total': 32 * (n_comp_warps + 2),
+            'prod_warp': n_comp_warps,
+            'steal_warp': n_comp_warps + 1,
+            'comp_threads': 32 * n_comp_warps,
+            'b_tile_bytes': b_tile_bytes,
+            'c_mtile_smem_stride': 8 * n_per_cta * 8,
+            'c_ntile_smem_stride': 8 * 8,
+            'dynm_total_bytes': dynm_total_bytes,
+        }
 
     def _dense_mma_setup(self, *, nn, warps_per_cta):
         a = self.A
         m, k = a.shape
         m_tiles = -(-m // 8)
-        k_rem   = k % 4
-        k_iters = (k + (4 - k_rem if k_rem else 0)) // 4
+        k_iters = -(-k // 4)
+        k_rem = k % 4
 
-        # A in fragment layout: lane l -> A[m_tile*8 + l/4][k_iter*4 + l%4]
+        # A in fragment layout: lane l -> A[mt*8 + l//4][kt*4 + l%4]
+        # DMMA tiles are 8x8x4 so this loads a 8x4 tile, flattens it and
+        # and packs it as uint64 as a more robust way of storing the values in
+        # the template
         a_u64 = []
-        for m_tile in range(m_tiles):
-            for k_iter in range(k_iters):
+        for mt in range(m_tiles):
+            for kt in range(k_iters):
                 for lane in range(32):
-                    i = m_tile * 8 + lane // 4
-                    j = k_iter * 4 + lane % 4
+                    i = mt * 8 + lane // 4
+                    j = kt * 4 + lane % 4
                     v = float(a[i, j]) if (i < m and j < k) else 0.0
-                    u = struct.unpack('<Q', struct.pack('<d', v))[0]
+                    u, = struct.unpack('<Q', struct.pack('<d', v))
                     a_u64.append(f'0x{u:016x}')
 
         n_per_warp = 8 * nn
         n_per_cta  = warps_per_cta * n_per_warp
-        a_elems    = m_tiles * k_iters * 32
 
         # Predicate-elision flags
         n_col_aligned = (self.n is not None and self.n % n_per_warp == 0)
@@ -240,10 +237,14 @@ class PTXMatMul(MatMul):
 
         return {
             'm_tiles': m_tiles,
-            'k_rem': k_rem, 'k_iters': k_iters,
+            'k_iters': k_iters,
+            'k_rem': k_rem,
+            'm_pad': m_tiles * 8,
+            'k_pad': k_iters * 4,
             'a_u64': a_u64,
-            'n_per_warp': n_per_warp, 'n_per_cta': n_per_cta,
-            'a_elems': a_elems,
+            'a_elems': m_tiles * k_iters * 32,
+            'n_per_warp': n_per_warp,
+            'n_per_cta': n_per_cta,
             'frag_stride_bytes': 32 * 8,
             'b_kiter_stride': 4 * (self.ldb or 0) * 8,
             'b_ntile_stride': 8 * 8,

@@ -26,7 +26,7 @@ bs = bool(block_stealing)
     .reg .u32  warp_n_base;
     .reg .u64  as_thr_base, b_thr_base, c_thr_base;
     .reg .pred pwarp_exit;
-    .reg .f64  a_frag;
+    .reg .${pftype}  a_frag;
 % if bs:
     .reg .u32  ctaid;
     .reg .u32  mbar_a, work_a;
@@ -34,11 +34,11 @@ bs = bool(block_stealing)
 % endif
 % for nt in range(nn):
     .reg .u32  b_col_${nt}, c_col0_${nt}, c_col1_${nt};
-% if not n_col_aligned:
+%  if not n_col_aligned:
     .reg .pred pvalid_bcol_${nt}, pvalid_c0col_${nt}, pvalid_c1col_${nt};
-% endif
-    .reg .f64  b_frag_${nt};
-    .reg .f64  c0_${nt}_<${m_tiles}>, c1_${nt}_<${m_tiles}>;
+%  endif
+    .reg .${pftype}  b_frag_${nt};
+    .reg .${pftype}  c0_${nt}_<${m_tiles}>, c1_${nt}_<${m_tiles}>;
 % endfor
 
     ld.param.u64 b_ptr, [_b];
@@ -69,30 +69,29 @@ bs = bool(block_stealing)
 % for ci in range(copy_v2_iters):
 <%
     base_pair = ci * blockx
-    is_last = ci == copy_v2_iters - 1
     pairs_this = min(blockx, a_pairs - base_pair)
 %>
         {
             .reg .u32 pidx;
             .reg .u64 off64, gaddr, saddr;
-            .reg .f64 v0, v1;
-% if is_last and pairs_this < blockx:
+            .reg .${pftype} v0, v1;
+%  if loop.last and pairs_this < blockx:
             .reg .pred plast;
             add.u32 pidx, tid, ${base_pair};
             setp.lt.u32 plast, pidx, ${a_pairs};
-            mul.wide.u32 off64, pidx, 16;
+            mul.wide.u32 off64, pidx, ${2 * dwidth_i};
             add.u64 gaddr, a_glb_base,  off64;
             add.u64 saddr, a_smem_base, off64;
-            @plast ld.global.nc.v2.f64 {v0, v1}, [gaddr];
-            @plast st.shared.v2.f64     [saddr], {v0, v1};
-% else:
+            @plast ld.weak.global.cg.v2.${pftype} {v0, v1}, [gaddr];
+            @plast st.shared.v2.${pftype}     [saddr], {v0, v1};
+%  else:
             add.u32 pidx, tid, ${base_pair};
-            mul.wide.u32 off64, pidx, 16;
+            mul.wide.u32 off64, pidx, ${2 * dwidth_i};
             add.u64 gaddr, a_glb_base,  off64;
             add.u64 saddr, a_smem_base, off64;
-            ld.global.nc.v2.f64 {v0, v1}, [gaddr];
-            st.shared.v2.f64     [saddr], {v0, v1};
-% endif
+            ld.weak.global.cg.v2.${pftype} {v0, v1}, [gaddr];
+            st.shared.v2.${pftype}     [saddr], {v0, v1};
+%  endif
         }
 % endfor
 % if a_pairs_tail:
@@ -100,12 +99,12 @@ bs = bool(block_stealing)
         {
             .reg .pred plast;
             .reg .u64 gaddr, saddr;
-            .reg .f64 v;
+            .reg .${pftype} v;
             setp.eq.u32 plast, tid, 0;
-            add.u64 gaddr, a_glb_base,  ${(a_elems-1) * 8};
-            add.u64 saddr, a_smem_base, ${(a_elems-1) * 8};
-            @plast ld.global.nc.f64 v, [gaddr];
-            @plast st.shared.f64    [saddr], v;
+            add.u64 gaddr, a_glb_base,  ${(a_elems-1) * dwidth_i};
+            add.u64 saddr, a_smem_base, ${(a_elems-1) * dwidth_i};
+            @plast ld.weak.global.cg.${pftype} v, [gaddr];
+            @plast st.shared.${pftype}    [saddr], v;
         }
 % endif
     }
@@ -121,14 +120,14 @@ bs = bool(block_stealing)
     }
 
 % for mt in range(m_tiles):
-% if pm_runtime(mt):
+%  if pm_runtime(mt):
     .reg .pred pm_${mt};
     {
         .reg .u32 crow;
         add.u32 crow, r_div4, ${mt * 8};
         setp.lt.u32 pm_${mt}, crow, ${m};
     }
-% endif
+%  endif
 % endfor
 
 % if bs:
@@ -164,11 +163,11 @@ $L_LOOP:
         add.u32 c_col0_${nt}, c_col0_${nt}, t;
         add.u32 c_col1_${nt}, c_col0_${nt}, 1;
     }
-% if not n_col_aligned:
+%  if not n_col_aligned:
     setp.lt.u32 pvalid_bcol_${nt},  b_col_${nt},  ${n};
     setp.lt.u32 pvalid_c0col_${nt}, c_col0_${nt}, ${n};
     setp.lt.u32 pvalid_c1col_${nt}, c_col1_${nt}, ${n};
-% endif
+%  endif
 % endfor
 
     {
@@ -190,11 +189,11 @@ $L_LOOP:
     }
 
 % for nt in range(nn):
-% for mt in range(m_tiles):
-% if beta == 0:
-    mov.f64 c0_${nt}_${mt}, 0d0000000000000000;
-    mov.f64 c1_${nt}_${mt}, 0d0000000000000000;
-% else:
+%  for mt in range(m_tiles):
+%   if beta_zero:
+    mov.${pftype} c0_${nt}_${mt}, ${fzero};
+    mov.${pftype} c1_${nt}_${mt}, ${fzero};
+%   else:
 <%
     pm = f'pm_{mt}' if pm_runtime(mt) else None
     pvc0 = f'pvalid_c0col_{nt}' if not n_col_aligned else None
@@ -204,56 +203,56 @@ $L_LOOP:
     {
         .reg .u64 caddr;
         add.u64      caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
-% if needs_zero_init:
-        mov.f64      c0_${nt}_${mt}, 0d0000000000000000;
-        mov.f64      c1_${nt}_${mt}, 0d0000000000000000;
-% endif
-        ${pred_emit(f'ld.global.f64 c0_{nt}_{mt}, [caddr];', pm, pvc0, pred_reg=f'p0_{nt}_{mt}')}
-        ${pred_emit(f'ld.global.f64 c1_{nt}_{mt}, [caddr + 8];', pm, pvc1, pred_reg=f'p1_{nt}_{mt}')}
+%    if needs_zero_init:
+        mov.${pftype}      c0_${nt}_${mt}, ${fzero};
+        mov.${pftype}      c1_${nt}_${mt}, ${fzero};
+%    endif
+        ${pred_emit(f'ld.weak.global.cg.{pftype} c0_{nt}_{mt}, [caddr];', pm, pvc0, pred_reg=f'p0_{nt}_{mt}')}
+        ${pred_emit(f'ld.weak.global.cg.{pftype} c1_{nt}_{mt}, [caddr + {dwidth_i}];', pm, pvc1, pred_reg=f'p1_{nt}_{mt}')}
     }
-% endif
-% endfor
+%   endif
+%  endfor
 % endfor
 
 % for ki in range(k_iters):
-% for nt in range(nn):
+%  for nt in range(nn):
 <%
     pvb = f'pvalid_bcol_{nt}' if not n_col_aligned else None
-    k_tail = (k_rem != 0 and ki == k_iters - 1)
+    k_tail = (k_rem != 0 and loop.parent.last)
     needs_zero = pvb is not None or k_tail
     pbrow = 'pbrow' if k_tail else None
 %>
     {
         .reg .u64 baddr;
         add.u64 baddr, b_thr_base, ${ki * b_kiter_stride + nt * b_ntile_stride};
-% if needs_zero:
-        mov.f64 b_frag_${nt}, 0d0000000000000000;
-% endif
-% if k_tail:
+%   if needs_zero:
+        mov.${pftype} b_frag_${nt}, ${fzero};
+%   endif
+%   if k_tail:
         .reg .pred pbrow;
         {
             .reg .u32 brow;
             add.u32 brow, r_mod4, ${ki * 4};
             setp.lt.u32 pbrow, brow, ${k};
         }
-% endif
-        ${pred_emit(f'ld.global.nc.f64 b_frag_{nt}, [baddr];', pbrow, pvb, pred_reg=f'pb_{ki}_{nt}')}
+%   endif
+        ${pred_emit(f'ld.weak.global.cg.{pftype} b_frag_{nt}, [baddr];', pbrow, pvb, pred_reg=f'pb_{ki}_{nt}')}
     }
-% endfor
-% for mt in range(m_tiles):
-    ld.shared.f64 a_frag, [as_thr_base + ${(mt * k_iters + ki) * frag_stride_bytes}];
-% for nt in range(nn):
-    mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64
+%  endfor
+%  for mt in range(m_tiles):
+    ld.shared.${pftype} a_frag, [as_thr_base + ${(mt * k_iters + ki) * frag_stride_bytes}];
+%   for nt in range(nn):
+    mma.sync.aligned.m8n8k4.row.col.${pftype}.${pftype}.${pftype}.${pftype}
         {c0_${nt}_${mt}, c1_${nt}_${mt}},
         {a_frag},
         {b_frag_${nt}},
         {c0_${nt}_${mt}, c1_${nt}_${mt}};
-% endfor
-% endfor
+%   endfor
+%  endfor
 % endfor
 
 % for nt in range(nn):
-% for mt in range(m_tiles):
+%  for mt in range(m_tiles):
 <%
     pm = f'pm_{mt}' if pm_runtime(mt) else None
     pvc0 = f'pvalid_c0col_{nt}' if not n_col_aligned else None
@@ -262,10 +261,10 @@ $L_LOOP:
     {
         .reg .u64 caddr;
         add.u64  caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
-        ${pred_emit(f'st.global.f64 [caddr], c0_{nt}_{mt};', pm, pvc0, pred_reg=f'p0s_{nt}_{mt}')}
-        ${pred_emit(f'st.global.f64 [caddr + 8], c1_{nt}_{mt};', pm, pvc1, pred_reg=f'p1s_{nt}_{mt}')}
+        ${pred_emit(f'st.weak.global.{pftype} [caddr], c0_{nt}_{mt};', pm, pvc0, pred_reg=f'p0s_{nt}_{mt}')}
+        ${pred_emit(f'st.weak.global.{pftype} [caddr + {dwidth_i}], c1_{nt}_{mt};', pm, pvc1, pred_reg=f'p1s_{nt}_{mt}')}
     }
-% endfor
+%  endfor
 % endfor
 
 % if bs:

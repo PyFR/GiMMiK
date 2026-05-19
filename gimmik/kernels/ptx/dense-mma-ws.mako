@@ -1,8 +1,4 @@
 <%inherit file='base'/>
-<%
-mbar_maxwait = '0x989680'
-direct_store = (beta == 0)
-%>
 
 <%def name="producer_init_setup()">
     // Producer warp: initial A bulk-copy + B load for ctaid_x's work
@@ -67,17 +63,17 @@ $L_WAIT_BRDY:
         }
 % endfor
 
-% if direct_store:
-        // direct_store: skip shared-staging entirely; compute warps store
-        // MMA outputs straight to global C with N-tail predication.
+% if beta_zero:
+        // beta=0: skip shared-staging entirely; compute warps store MMA
+        // outputs straight to global C with N-tail predication.
         .reg .u64 c_glob_addr;
-        ld.param.u64 c_glob_addr, [_c];
+        ld.param.u64 c_glob_addr, [c_desc];
         cvta.to.global.u64 c_glob_addr, c_glob_addr;
 % else:
         .reg .b32 c_thr_smem;
         {
             .reg .b32 t1, ccol_b;
-            mul.lo.u32  t1,     base_crow, ${n_per_cta * 8};
+            mul.lo.u32  t1,     base_crow, ${n_per_cta * dwidth_i};
             shl.b32     ccol_b, base_ccol, 3;
             add.u32     c_thr_smem, c_smem, t1;
             add.u32     c_thr_smem, c_thr_smem, ccol_b;
@@ -86,91 +82,91 @@ $L_WAIT_BRDY:
 
         // Zero accumulators
 % for mt in range(m_tiles):
-% for nt in range(nn):
-        .reg .f64 d_x_${mt}_${nt}, d_y_${mt}_${nt};
-        mov.f64 d_x_${mt}_${nt}, 0d0000000000000000;
-        mov.f64 d_y_${mt}_${nt}, 0d0000000000000000;
-% endfor
+%  for nt in range(nn):
+        .reg .${pftype} d_x_${mt}_${nt}, d_y_${mt}_${nt};
+        mov.${pftype} d_x_${mt}_${nt}, ${fzero};
+        mov.${pftype} d_y_${mt}_${nt}, ${fzero};
+%  endfor
 % endfor
 
-        .reg .f64 a_f;
+        .reg .${pftype} a_f;
 % for mt in range(m_tiles):
-% for kt in range(k_iters):
+%  for kt in range(k_iters):
 <%
-    k_tail = (k_rem != 0 and kt == k_iters - 1)
+    k_tail = (k_rem != 0 and loop.last)
 %>
         {
             .reg .b32 a_a;
-            add.u32       a_a, a_thr_a, ${(kt * 32 + mt * 32 * k_iters) * 8};
-            ld.shared.f64 a_f, [a_a];
-% if k_tail:
+            add.u32       a_a, a_thr_a, ${(kt * 32 + mt * 32 * k_iters) * dwidth_i};
+            ld.shared.${pftype} a_f, [a_a];
+%   if k_tail:
             .reg .pred pbrow_${mt}_${kt};
             {
                 .reg .b32 brow;
                 add.u32     brow, base_brow, ${4 * kt};
                 setp.lt.u32 pbrow_${mt}_${kt}, brow, ${k};
             }
-% endif
-% for nt in range(nn):
+%   endif
+%   for nt in range(nn):
             {
                 .reg .b32 b_a, b_row;
-                .reg .f64 b_f;
+                .reg .${pftype} b_f;
                 add.u32       b_row, base_brow, ${4 * kt};
-                mul.lo.u32    b_row, b_row, ${n_per_cta * 8};
+                mul.lo.u32    b_row, b_row, ${n_per_cta * dwidth_i};
                 add.u32       b_a, b_thr_a_${nt}, b_row;
-% if k_tail:
-                mov.f64 b_f, 0d0000000000000000;
-                @pbrow_${mt}_${kt} ld.shared.f64 b_f, [b_a];
-% else:
-                ld.shared.f64 b_f, [b_a];
-% endif
-                mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64
+%    if k_tail:
+                mov.${pftype} b_f, ${fzero};
+                @pbrow_${mt}_${kt} ld.shared.${pftype} b_f, [b_a];
+%    else:
+                ld.shared.${pftype} b_f, [b_a];
+%    endif
+                mma.sync.aligned.m8n8k4.row.col.${pftype}.${pftype}.${pftype}.${pftype}
                     {d_x_${mt}_${nt}, d_y_${mt}_${nt}}, {a_f}, {b_f},
                     {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
             }
-% endfor
+%   endfor
         }
-% endfor
+%  endfor
 % endfor
 
-% if direct_store:
+% if beta_zero:
         .reg .u64 c_thr_glob_base;
         {
             .reg .u32 thr_col_off, thr_addr_off_lo;
             add.u32 thr_col_off, base_ccol, n_start_curr;
             mad.lo.u32 thr_addr_off_lo, base_crow, ${ldc}, thr_col_off;
             .reg .u64 thr_byte_off;
-            mul.wide.u32 thr_byte_off, thr_addr_off_lo, 8;
+            mul.wide.u32 thr_byte_off, thr_addr_off_lo, ${dwidth_i};
             add.u64 c_thr_glob_base, c_glob_addr, thr_byte_off;
         }
-% for mt in range(m_tiles):
+%  for mt in range(m_tiles):
 <%
     row_tail = (m_pad > m) and ((mt + 1) * 8 > m)
 %>
-% if row_tail:
+%   if row_tail:
         .reg .pred p_row_${mt};
         {
             .reg .b32 crow;
             add.u32 crow, base_crow, ${8 * mt};
             setp.lt.u32 p_row_${mt}, crow, ${m};
         }
-% endif
-% for nt in range(nn):
+%   endif
+%   for nt in range(nn):
         {
             .reg .pred p_st;
             .reg .u32 g_ccol;
             add.u32 g_ccol, base_ccol, ${8 * nt};
             add.u32 g_ccol, g_ccol, n_start_curr;
             setp.lt.u32 p_st, g_ccol, ${n};
-% if row_tail:
+%    if row_tail:
             and.pred p_st, p_st, p_row_${mt};
-% endif
-            .reg .u64 c_addr;
-            add.u64 c_addr, c_thr_glob_base, ${(mt * 8 * ldc + nt * 8) * 8};
-            @p_st st.global.v2.f64 [c_addr], {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
+%    endif
+            .reg .u64 _c_addr;
+            add.u64 _c_addr, c_thr_glob_base, ${(mt * 8 * ldc + nt * 8) * dwidth_i};
+            @p_st st.weak.global.v2.${pftype} [_c_addr], {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
         }
-% endfor
-% endfor
+%   endfor
+%  endfor
 % else:
         // Wait until producer's prev-iter TMA-store of C has drained.
         {
@@ -182,18 +178,18 @@ $L_WAIT_CSTORE:
 
         // Vector-store {d_x, d_y} pairs to csmem.  M-tail / N-tail OOB rows
         // are dropped by the C tensor map.
-% for mt in range(m_tiles):
-% for nt in range(nn):
+%  for mt in range(m_tiles):
+%   for nt in range(nn):
         {
             .reg .b32 csaddr;
             add.u32 csaddr, c_thr_smem, ${mt * c_mtile_smem_stride + nt * c_ntile_smem_stride};
-            st.shared.v2.f64 [csaddr], {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
+            st.shared.v2.${pftype} [csaddr], {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
         }
-% endfor
-% endfor
+%   endfor
+%  endfor
 % endif
 
-% if not direct_store:
+% if not beta_zero:
         bar.sync 1, ${comp_threads};
         fence.proxy.async.shared::cta;
         {
@@ -260,7 +256,7 @@ $L_WAIT_WNEW_D:
         }
         bar.warp.sync 0xffffffff;
 
-% if not direct_store:
+% if not beta_zero:
         // TMA reduce+store of C (beta=1 only; beta=0 uses direct global
         // stores from compute warps, so the producer does no C work).
         {
@@ -329,11 +325,9 @@ $L_AFTER_CTRL:
     ${', '.join(a_u64)}
 };
 .extern .shared .align 128 .b8 ${kname}_dynm[];
-.const  .align 64  .b8 ${kname}_bdesc[128];
-.const  .align 64  .b8 ${kname}_cdesc[128];
 
-.visible .entry ${kname}(.param .u64 _b,
-                         .param .u64 _c)
+.visible .entry ${kname}(.param .u64 b_desc,
+                         .param .u64 c_desc)
 .maxntid ${blockx_total}, 1, 1
 {
     .reg .b32 tid, warp, lane, phase, ctaid_x;
@@ -369,8 +363,8 @@ $L_AFTER_CTRL:
     add.u32 wid_new_mbar, dynm_base, ${wid_new_mbar_off};
     add.u32 wid_used_mbar, dynm_base, ${wid_used_mbar_off};
 
-    cvta.const.u64 bdesc_addr, ${kname}_bdesc;
-    cvta.const.u64 cdesc_addr, ${kname}_cdesc;
+    ld.param.u64 bdesc_addr, [b_desc];
+    ld.param.u64 cdesc_addr, [c_desc];
 
     setp.eq.u32 p_tid0, tid, 0;
 
@@ -401,7 +395,7 @@ $L_AFTER_CTRL:
     }
     bar.sync 0;
 
-    // Compute-warp lane geometry (cheap; all warps execute uniformly)
+    // Compute-warp lane geometry
     {
         .reg .b32 t, w_n_base;
         and.b32    base_brow, lane, 3;
