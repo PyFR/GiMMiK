@@ -17,7 +17,8 @@ class CUDAMatMul(MatMul):
         density = nnz / arr.size
         return (nuq <= 28) or (density <= 0.15)
 
-    def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
+    def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
+                           **kwargs):
         # B loading, C streaming kernel
         yield ('cstream', {}, {})
 
