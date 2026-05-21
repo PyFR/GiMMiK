@@ -2,7 +2,7 @@
 
 <%
 mx = partition(A, into=msplit, by='rows')
-bchunks = chunk(bix_list, bsz)
+bchunks = chunk(bix, bsz)
 m_per_group = max(len(mcx) for mcx in mx)
 bsub_bytes = 2 * bsz * blockx * dwidth_i
 def bsub_off(buf, idx):

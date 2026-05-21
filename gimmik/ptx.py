@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import struct
 
 import numpy as np
 
@@ -12,13 +11,12 @@ class PTXMatMul(MatMul):
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0,
                 'dynamic_shared': 0}
 
-    DENSE_SMEM_MAX = 200*1024
     PTX_SM = {(8, 0), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)}
 
     @classmethod
     def is_sparse_suitable(cls, arr, cc):
-        nnz = int(np.count_nonzero(arr))
-        nuq = int(len(np.unique(np.abs(arr))))
+        nnz = np.count_nonzero(arr)
+        nuq = len(np.unique(np.abs(arr)))
         density = nnz / arr.size
         return ((nuq <= 28) or (density <= 0.15)) and cc in cls.PTX_SM
 
@@ -32,9 +30,12 @@ class PTXMatMul(MatMul):
     def is_suitable(cls, arr, cc):
         return cls.is_sparse_suitable(arr, cc) or cls.is_dense_suitable(arr, cc)
 
-    def _kernel_generators(self, dtype, dsize, *, compute_capability=None):
+    def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
+                           smem_info=None):
         cc = compute_capability or (0, 0)
+        smem_info = smem_info or (48*1024, 48*1024)
         base_args = {'cc': cc,
+                     'smem_info': smem_info,
                      'pred_emit': self._pred_emit,
                      'pftype': 'f32' if dtype == 'float' else 'f64',
                      'dwidth_i': 4 if dtype == 'float' else 8,
@@ -53,8 +54,6 @@ class PTXMatMul(MatMul):
     def _sparse_kernel_generators(self, dtype, dsize, base_args):
         # Sparse-shared template constants
         base_args = base_args | {
-            'bix_list': list(self.bix),
-            'bix_pos': self.bix,
             'has_zero_rows': bool(self.has_zero_rows),
             'row_nz': [[(kx, self.A[j, kx]) for kx in range(self.k)
                         if self.A[j, kx] != 0] for j in range(self.m)],
@@ -126,10 +125,10 @@ class PTXMatMul(MatMul):
             ]
 
         for tpl, nn, w in dense_configs:
-            blkx = 32 * w
             if (n_per_cta := 8 * nn * w) > self.n:
                 continue
             setup = self._dense_mma_setup(nn=nn, warps_per_cta=w)
+            blkx = 32 * w
             args = (base_args | {'warps_per_cta': w, 'nn': nn,
                                  'block_stealing': block_steal} | setup)
             meta = {
@@ -144,6 +143,8 @@ class PTXMatMul(MatMul):
             yield from self._dense_ws_kernel_generators(dtype, dsize, base_args)
 
     def _dense_ws_kernel_generators(self, dtype, dsize, base_args):
+        static_max, dynamic_max = base_args['smem_info']
+
         # (nn, compute) -- block has compute + 2 warps (producer, stealer)
         ws_configs = [(1, 4), (2, 4), (4, 4)]
         for nn, w in ws_configs:
@@ -153,12 +154,13 @@ class PTXMatMul(MatMul):
             setup = self._dense_mma_setup(nn=nn, warps_per_cta=w)
             ws_setup = self._dense_ws_setup(setup, n_comp_warps=w)
 
-            if ws_setup['dynm_total_bytes'] > self.DENSE_SMEM_MAX:
+            if ws_setup['dynm_total_bytes'] > dynamic_max:
                 continue
 
+            blkx = 32 * (w + 2)
             args = base_args | {'nn': nn} | setup | ws_setup
             meta = {
-                'block': (32 * (w + 2), 1, 1),
+                'block': (blkx, 1, 1),
                 'grid': (-(-self.n // n_per_cta), 1, 1),
                 'desc': f'dense-mma-ws/nn{nn}-w{w}',
                 'ws_b_tile': (n_per_cta, setup['k_pad']),
@@ -209,23 +211,17 @@ class PTXMatMul(MatMul):
     def _dense_mma_setup(self, *, nn, warps_per_cta):
         a = self.A
         m, k = a.shape
-        m_tiles = -(-m // 8)
-        k_iters = -(-k // 4)
+        m_tiles = (m + 7) // 8
+        k_tiles = (k + 3) // 4
         k_rem = k % 4
 
-        # A in fragment layout: lane l -> A[mt*8 + l//4][kt*4 + l%4]
-        # DMMA tiles are 8x8x4 so this loads a 8x4 tile, flattens it and
-        # and packs it as uint64 as a more robust way of storing the values in
-        # the template
-        a_u64 = []
-        for mt in range(m_tiles):
-            for kt in range(k_iters):
-                for lane in range(32):
-                    i = mt * 8 + lane // 4
-                    j = kt * 4 + lane % 4
-                    v = float(a[i, j]) if (i < m and j < k) else 0.0
-                    u, = struct.unpack('<Q', struct.pack('<d', v))
-                    a_u64.append(f'0x{u:016x}')
+        # A in DMMA-fragment layout: lane l -> A[mt*8 + l//4][kt*4 + l%4]
+        # i.e. an (m_tiles, k_tiles) grid of row-major 8x4 tiles, packed as
+        # uint64
+        a_pad = np.zeros((m_tiles*8, k_tiles*4), dtype=np.float64)
+        a_pad[:m, :k] = a
+        tiles = a_pad.reshape(m_tiles, 8, k_tiles, 4).transpose(0, 2, 1, 3)
+        a_u64 = [f'0x{u:016x}' for u in tiles.view(np.uint64).ravel()]
 
         n_per_warp = 8 * nn
         n_per_cta  = warps_per_cta * n_per_warp
@@ -237,12 +233,12 @@ class PTXMatMul(MatMul):
 
         return {
             'm_tiles': m_tiles,
-            'k_iters': k_iters,
+            'k_tiles': k_tiles,
             'k_rem': k_rem,
             'm_pad': m_tiles * 8,
-            'k_pad': k_iters * 4,
+            'k_pad': k_tiles * 4,
             'a_u64': a_u64,
-            'a_elems': m_tiles * k_iters * 32,
+            'a_elems': m_tiles * k_tiles * 32,
             'n_per_warp': n_per_warp,
             'n_per_cta': n_per_cta,
             'frag_stride_bytes': 32 * 8,

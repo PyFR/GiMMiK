@@ -17,7 +17,7 @@
 % endif
     .reg .u32 n, id;
     .reg .u64 b, c, b_base, c_base;
-    .reg .${pftype} csub<${m}>, bv<${len(bix_list)}>;
+    .reg .${pftype} csub<${m}>, bv<${len(bix)}>;
     .reg .pred p1;
 
 % if n is None:
@@ -50,7 +50,7 @@
     }
 
 ## Batch-load active B columns
-% for i, kx in enumerate(bix_list):
+% for i, kx in enumerate(bix):
 %  if n is None:
     {
         .reg .u32 _boff;
@@ -89,13 +89,13 @@
 % endif
 
 ## Main compute
-% for kx in bix_list:
+% for kx in bix:
 %  for j, jx in enumerate(A[:, kx]):
 %   if jx != 0:
 %    if beta_zero and kx == afix[j]:
-    mul.${pftype} csub${j}, bv${bix_pos[kx]}, ${jx};
+    mul.${pftype} csub${j}, bv${bix[kx]}, ${jx};
 %    else:
-    fma.rn.${pftype} csub${j}, bv${bix_pos[kx]}, ${jx}, csub${j};
+    fma.rn.${pftype} csub${j}, bv${bix[kx]}, ${jx}, csub${j};
 %    endif
 %   endif
 %   if kx == alix[j]:

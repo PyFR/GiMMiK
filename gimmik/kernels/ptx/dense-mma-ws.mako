@@ -91,13 +91,13 @@ $L_WAIT_BRDY:
 
         .reg .${pftype} a_f;
 % for mt in range(m_tiles):
-%  for kt in range(k_iters):
+%  for kt in range(k_tiles):
 <%
     k_tail = (k_rem != 0 and loop.last)
 %>
         {
             .reg .b32 a_a;
-            add.u32       a_a, a_thr_a, ${(kt * 32 + mt * 32 * k_iters) * dwidth_i};
+            add.u32       a_a, a_thr_a, ${(kt * 32 + mt * 32 * k_tiles) * dwidth_i};
             ld.shared.${pftype} a_f, [a_a];
 %   if k_tail:
             .reg .pred pbrow_${mt}_${kt};

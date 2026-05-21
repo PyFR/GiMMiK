@@ -5,7 +5,7 @@
 {
     .reg .u32 n, id;
     .reg .u64 b, c, b_base, c_base;
-    .reg .f64 bv_a<${len(bix_list)}>, bv_b<${len(bix_list)}>, dotp_a, dotp_b;
+    .reg .f64 bv_a<${len(bix)}>, bv_b<${len(bix)}>, dotp_a, dotp_b;
     .reg .pred p1;
 
     mov.u32 n, ${-(-n // 2)};
@@ -33,7 +33,7 @@
     }
 
 ## Batch-load B column pairs
-% for i, kx in enumerate(bix_list):
+% for i, kx in enumerate(bix):
     ld.weak.global.cg.v2.f64 {bv_a${i}, bv_b${i}}, [b_base + ${ldb*kx*dwidth_i}];
 % endfor
 
@@ -42,11 +42,11 @@
 %  if row_nz[j]:
 %   for kx, jx in row_nz[j]:
 %    if loop.first:
-    mul.f64 dotp_a, bv_a${bix_pos[kx]}, ${jx};
-    mul.f64 dotp_b, bv_b${bix_pos[kx]}, ${jx};
+    mul.f64 dotp_a, bv_a${bix[kx]}, ${jx};
+    mul.f64 dotp_b, bv_b${bix[kx]}, ${jx};
 %    else:
-    fma.rn.f64 dotp_a, bv_a${bix_pos[kx]}, ${jx}, dotp_a;
-    fma.rn.f64 dotp_b, bv_b${bix_pos[kx]}, ${jx}, dotp_b;
+    fma.rn.f64 dotp_a, bv_a${bix[kx]}, ${jx}, dotp_a;
+    fma.rn.f64 dotp_b, bv_b${bix[kx]}, ${jx}, dotp_b;
 %    endif
 %   endfor
 %   if beta_zero:

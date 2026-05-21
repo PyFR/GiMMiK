@@ -125,7 +125,7 @@
 %  endfor
 % endfor
 
-% for ki in range(k_iters):
+% for ki in range(k_tiles):
 %  for nt in range(nn):
 <%
     pvb = f'pvalid_bcol_{nt}' if not n_col_aligned else None
@@ -151,7 +151,7 @@
     }
 %  endfor
 %  for mt in range(m_tiles):
-    ld.weak.global.${pftype} a_frag, [ag_thr_base + ${(mt * k_iters + ki) * frag_stride_bytes}];
+    ld.weak.global.${pftype} a_frag, [ag_thr_base + ${(mt * k_tiles + ki) * frag_stride_bytes}];
 %   for nt in range(nn):
     mma.sync.aligned.m8n8k4.row.col.${pftype}.${pftype}.${pftype}.${pftype}
         {c0_${nt}_${mt}, c1_${nt}_${mt}},

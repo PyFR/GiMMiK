@@ -17,7 +17,7 @@
 % endif
     .reg .u32 n, id;
     .reg .u64 b, c, b_base, c_base;
-    .reg .${pftype} bv<${len(bix_list)}>, dotp;
+    .reg .${pftype} bv<${len(bix)}>, dotp;
     .reg .pred p1;
 
 % if n is None:
@@ -50,7 +50,7 @@
     }
 
 ## Batch-load active B columns
-% for i, kx in enumerate(bix_list):
+% for i, kx in enumerate(bix):
 %  if n is None:
     {
         .reg .u32 _boff;
@@ -69,9 +69,9 @@
 %  if row_nz[j]:
 %   for kx, jx in row_nz[j]:
 %    if loop.first:
-    mul.${pftype} dotp, bv${bix_pos[kx]}, ${jx};
+    mul.${pftype} dotp, bv${bix[kx]}, ${jx};
 %    else:
-    fma.rn.${pftype} dotp, bv${bix_pos[kx]}, ${jx}, dotp;
+    fma.rn.${pftype} dotp, bv${bix[kx]}, ${jx}, dotp;
 %    endif
 %   endfor
 %   if beta_zero:
