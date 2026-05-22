@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-
-
 import numpy as np
 
 from gimmik.base import MatMul
@@ -8,10 +5,16 @@ from gimmik.base import MatMul
 
 class PTXMatMul(MatMul):
     platform = 'ptx'
-    basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0,
-                'dynamic_shared': 0}
+    basemeta = {
+        'block': (128, 1, 1),
+        'width': 1,
+        'shared': 0,
+        'dynamic_shared': 0
+    }
 
-    PTX_SM = {(8, 0), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)}
+    # Map Supported CC -> Minimum PTX version
+    PTX_SM = {(8, 0): (7, 0), (9, 0): (8, 0), (10, 0): (8, 7), (10, 3): (8, 7),
+              (12, 0): (8, 7), (12, 1): (8, 7)}
 
     @classmethod
     def is_sparse_suitable(cls, arr, cc):
@@ -33,17 +36,20 @@ class PTXMatMul(MatMul):
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
                            smem_info=None):
         cc = compute_capability or (0, 0)
+        ptx = self.PTX_SM.get(cc, (0, 0))
         smem_info = smem_info or (48*1024, 48*1024)
-        base_args = {'cc': cc,
-                     'smem_info': smem_info,
-                     'pred_emit': self._pred_emit,
-                     'pftype': 'f32' if dtype == 'float' else 'f64',
-                     'dwidth_i': 4 if dtype == 'float' else 8,
-                     'fzero': ('0f00000000' if dtype == 'float'
-                         else '0d0000000000000000'),
-                     'beta_zero': self.beta == 0,
-                     'mbar_maxwait': '0x989680'
-                    }
+        base_args = {
+            'ptx': ptx,
+            'cc': cc,
+            'smem_info': smem_info,
+            'pred_emit': self._pred_emit,
+            'pftype': 'f32' if dtype == 'float' else 'f64',
+            'dwidth_i': 4 if dtype == 'float' else 8,
+            'fzero': ('0f00000000' if dtype == 'float'
+                      else '0d0000000000000000'),
+            'beta_zero': self.beta == 0,
+            'mbar_maxwait': '0x989680',
+        }
 
         if self.is_sparse_suitable(self.A, cc):
             yield from self._sparse_kernel_generators(dtype, dsize, base_args)
@@ -68,24 +74,32 @@ class PTXMatMul(MatMul):
         # Four-way m-split B streaming, C accumulation kernel
         ms, bsz, blkx = 4, 24, 32
         args = base_args | {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
-        meta = {'block': (blkx, ms, 1), 'shared': 2*bsz*blkx*dsize,
-                'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}'}
+        meta = {
+            'block': (blkx, ms, 1),
+            'shared': 2*bsz*blkx*dsize,
+            'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}',
+        }
         yield ('bstream-msplit', args, meta)
 
         # Single-warp LDGSTS variant for medium-M beta=0 large-K cases
         if self.beta == 0 and self.m <= 320 and len(self.bix) >= 64:
             ms, bsz, blkx = 1, 32, 64
             args = base_args | {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
-            meta = {'block': (blkx, ms, 1),
-                    'shared': 2*bsz*blkx*dsize,
-                    'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}'}
+            meta = {
+                'block': (blkx, ms, 1),
+                'shared': 2*bsz*blkx*dsize,
+                'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}',
+            }
             yield ('bstream-msplit', args, meta)
 
         # Two-way k-split B loading, C streaming kernel
         ks, csz, blkx = 2, 24, 32
         args = base_args | {'ksplit': ks, 'csz': csz, 'blockx': blkx}
-        meta = {'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize,
-                'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}'}
+        meta = {
+            'block': (blkx, ks, 1),
+            'shared': (ks - 1)*csz*blkx*dsize,
+            'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}',
+        }
         yield ('cstream-ksplit', args, meta)
 
         # Four-way k-split for large K
@@ -93,9 +107,11 @@ class PTXMatMul(MatMul):
         if K_used > 500:
             ks, csz, blkx = 4, 20, 32
             args = base_args | {'ksplit': ks, 'csz': csz, 'blockx': blkx}
-            meta = {'block': (blkx, ks, 1),
-                    'shared': (ks - 1)*csz*blkx*dsize,
-                    'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}'}
+            meta = {
+                'block': (blkx, ks, 1),
+                'shared': (ks - 1)*csz*blkx*dsize,
+                'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}',
+            }
             yield ('cstream-ksplit', args, meta)
 
         # Width-2 vector cstream for fp64 small-K
@@ -104,8 +120,11 @@ class PTXMatMul(MatMul):
                 and (self.aligne is None or self.aligne % 2 == 0)):
             blkx = 128
             args = base_args | {'blockx': blkx}
-            meta = {'block': (blkx, 1, 1), 'width': 2,
-                    'desc': f'cstream-w2/x{blkx}'}
+            meta = {
+                'block': (blkx, 1, 1),
+                'width': 2,
+                'desc': f'cstream-w2/x{blkx}',
+            }
             yield ('cstream-w2', args, meta)
 
     def _dense_kernel_generators(self, dtype, dsize, base_args):
@@ -127,10 +146,9 @@ class PTXMatMul(MatMul):
         for tpl, nn, w in dense_configs:
             if (n_per_cta := 8 * nn * w) > self.n:
                 continue
-            setup = self._dense_mma_setup(nn=nn, warps_per_cta=w)
+            setup = self._dense_mma_setup(nn, w, block_steal)
             blkx = 32 * w
-            args = (base_args | {'warps_per_cta': w, 'nn': nn,
-                                 'block_stealing': block_steal} | setup)
+            args = base_args | setup
             meta = {
                 'block': (blkx, 1, 1),
                 'grid': (-(-self.n // n_per_cta), 1, 1),
@@ -151,14 +169,14 @@ class PTXMatMul(MatMul):
             if (n_per_cta := 8 * nn * w) > self.n:
                 continue
 
-            setup = self._dense_mma_setup(nn=nn, warps_per_cta=w)
-            ws_setup = self._dense_ws_setup(setup, n_comp_warps=w)
+            setup = self._dense_mma_setup(nn, w, True)
+            ws_setup = self._dense_ws_setup(setup, w)
 
             if ws_setup['dynm_total_bytes'] > dynamic_max:
                 continue
 
             blkx = 32 * (w + 2)
-            args = base_args | {'nn': nn} | setup | ws_setup
+            args = base_args | setup | ws_setup
             meta = {
                 'block': (blkx, 1, 1),
                 'grid': (-(-self.n // n_per_cta), 1, 1),
@@ -184,11 +202,11 @@ class PTXMatMul(MatMul):
         return out, total
 
     @classmethod
-    def _dense_ws_setup(cls, setup, *, n_comp_warps):
+    def _dense_ws_setup(cls, setup, n_comp_warps):
         n_per_cta = setup['n_per_cta']
         b_tile_bytes = setup['k_pad'] * n_per_cta * 8
         c_tile_bytes = setup['m_pad'] * n_per_cta * 8
-        a_bytes = setup['a_elems'] * 8
+        a_bytes = setup['m_tiles'] * setup['k_tiles'] * 32 * 8
 
         regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
                    ('c', c_tile_bytes), ('a', a_bytes), ('wid', 16)]
@@ -196,7 +214,7 @@ class PTXMatMul(MatMul):
                  'steal', 'wid_new', 'wid_used')
         offsets, dynm_total_bytes = cls._dsmem_alloc(regions, mbars)
 
-        return offsets | {
+        args = {
             'n_comp_warps': n_comp_warps,
             'blockx_total': 32 * (n_comp_warps + 2),
             'prod_warp': n_comp_warps,
@@ -208,7 +226,9 @@ class PTXMatMul(MatMul):
             'dynm_total_bytes': dynm_total_bytes,
         }
 
-    def _dense_mma_setup(self, *, nn, warps_per_cta):
+        return offsets | args
+
+    def _dense_mma_setup(self, nn, warps_per_cta, block_steal):
         a = self.A
         m, k = a.shape
         m_tiles = (m + 7) // 8
@@ -218,9 +238,9 @@ class PTXMatMul(MatMul):
         # A in DMMA-fragment layout: lane l -> A[mt*8 + l//4][kt*4 + l%4]
         # i.e. an (m_tiles, k_tiles) grid of row-major 8x4 tiles, packed as
         # uint64
-        a_pad = np.zeros((m_tiles*8, k_tiles*4), dtype=np.float64)
+        a_pad = np.zeros((m_tiles*8, k_tiles*4))
         a_pad[:m, :k] = a
-        tiles = a_pad.reshape(m_tiles, 8, k_tiles, 4).transpose(0, 2, 1, 3)
+        tiles = a_pad.reshape(m_tiles, 8, k_tiles, 4).swapaxes(1, 2)
         a_u64 = [f'0x{u:016x}' for u in tiles.view(np.uint64).ravel()]
 
         n_per_warp = 8 * nn
@@ -232,13 +252,14 @@ class PTXMatMul(MatMul):
             return (mt + 1) * 8 > m
 
         return {
+            'warps_per_cta': warps_per_cta,
+            'nn': nn,
             'm_tiles': m_tiles,
             'k_tiles': k_tiles,
             'k_rem': k_rem,
             'm_pad': m_tiles * 8,
             'k_pad': k_tiles * 4,
             'a_u64': a_u64,
-            'a_elems': m_tiles * k_tiles * 32,
             'n_per_warp': n_per_warp,
             'n_per_cta': n_per_cta,
             'frag_stride_bytes': 32 * 8,
@@ -248,6 +269,7 @@ class PTXMatMul(MatMul):
             'c_ntile_stride': 8 * 8,
             'n_col_aligned': n_col_aligned,
             'pm_runtime': pm_runtime,
+            'block_stealing': block_steal,
         }
 
     @staticmethod

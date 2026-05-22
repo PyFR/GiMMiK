@@ -1,6 +1,6 @@
 <%inherit file='base'/>
 
-.global .align 16 .b64 ${kname}_Ag[${a_elems}] = {
+.global .align 16 .b64 ${kname}_Ag[${m_tiles*k_tiles*32}] = {
     ${', '.join(a_u64)}
 };
 

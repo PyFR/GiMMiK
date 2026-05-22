@@ -10,11 +10,11 @@
         mov.u64            a_glb, ${kname}_Ag;
         cvta.to.global.u64 a_glb, a_glb;
         @p_warp_lead cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes
-            [a_smem], [a_glb], ${a_elems * 8}, [tma_mbar];
+            [a_smem], [a_glb], ${m_tiles*k_tiles*32 * 8}, [tma_mbar];
         @p_warp_lead cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes
             [b1_smem], [bdesc_addr, {n_start0, 0}], [tma_mbar];
         @p_warp_lead mbarrier.expect_tx.relaxed.cta.shared::cta.b64
-            [tma_mbar], ${b_tile_bytes + a_elems * 8};
+            [tma_mbar], ${b_tile_bytes + m_tiles*k_tiles*32 * 8};
         bar.warp.sync 0xffffffff;
         .reg .b64 state;
         .reg .pred p1;
@@ -321,7 +321,7 @@ $L_WAIT_WUSED:
 $L_AFTER_CTRL:
 </%def>
 
-.global .align 16 .b64 ${kname}_Ag[${a_elems}] = {
+.global .align 16 .b64 ${kname}_Ag[${m_tiles*k_tiles*32}] = {
     ${', '.join(a_u64)}
 };
 .extern .shared .align 128 .b8 ${kname}_dynm[];

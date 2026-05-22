@@ -3,8 +3,8 @@
 <%
 # Cooperative-copy params (gA-only)
 blockx        = 32 * warps_per_cta
-a_pairs       = a_elems // 2
-a_pairs_tail  = a_elems % 2
+a_pairs       = m_tiles*k_tiles*32 // 2
+a_pairs_tail  = m_tiles*k_tiles*32 % 2
 copy_v2_iters = (a_pairs + blockx - 1) // blockx
 bs = bool(block_stealing)
 %>
@@ -13,10 +13,10 @@ bs = bool(block_stealing)
 .shared .align 8 .b64 ${kname}_mbar;
 .shared .align 16 .b8 ${kname}_workid[16];
 % endif
-.global .align 16 .b64 ${kname}_Ag[${a_elems}] = {
+.global .align 16 .b64 ${kname}_Ag[${m_tiles*k_tiles*32}] = {
     ${', '.join(a_u64)}
 };
-.shared .align 16 .b64 ${kname}_As[${a_elems}];
+.shared .align 16 .b64 ${kname}_As[${m_tiles*k_tiles*32}];
 
 .visible .entry ${kname}(.param .u64 _b,
                          .param .u64 _c)
@@ -95,14 +95,14 @@ bs = bool(block_stealing)
         }
 % endfor
 % if a_pairs_tail:
-        // Tail element (only when a_elems is odd)
+        // Tail element (only when m_tiles*k_tiles*32 is odd)
         {
             .reg .pred plast;
             .reg .u64 gaddr, saddr;
             .reg .${pftype} v;
             setp.eq.u32 plast, tid, 0;
-            add.u64 gaddr, a_glb_base,  ${(a_elems-1) * dwidth_i};
-            add.u64 saddr, a_smem_base, ${(a_elems-1) * dwidth_i};
+            add.u64 gaddr, a_glb_base,  ${(m_tiles*k_tiles*32-1) * dwidth_i};
+            add.u64 saddr, a_smem_base, ${(m_tiles*k_tiles*32-1) * dwidth_i};
             @plast ld.weak.global.cg.${pftype} v, [gaddr];
             @plast st.shared.${pftype}    [saddr], v;
         }
