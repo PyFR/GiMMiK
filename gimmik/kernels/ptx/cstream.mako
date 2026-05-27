@@ -53,10 +53,8 @@
 % for i, kx in enumerate(bix):
 %  if n is None:
     {
-        .reg .u32 _boff;
         .reg .u64 _bptr;
-        mul.lo.u32 _boff, ldb, ${kx};
-        mad.wide.u32 _bptr, ${dwidth_i}, _boff, b_base;
+        mad.wide.u32 _bptr, ldb, ${kx * dwidth_i}, b_base;
         ld.weak.global.cg.${pftype} bv${i}, [_bptr];
     }
 %  else:
@@ -67,20 +65,15 @@
 ## Compute and store each output row
 % for j in range(m):
 %  if row_nz[j]:
+    mov.${pftype} dotp, ${fzero};
 %   for kx, jx in row_nz[j]:
-%    if loop.first:
-    mul.${pftype} dotp, bv${bix[kx]}, ${jx};
-%    else:
     fma.rn.${pftype} dotp, bv${bix[kx]}, ${jx}, dotp;
-%    endif
 %   endfor
 %   if beta_zero:
 %    if n is None:
     {
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
         st.weak.global.cg.${pftype} [_cptr], dotp;
     }
 %    else:
@@ -90,10 +83,8 @@
     {
         .reg .${pftype} _ctmp;
 %    if n is None:
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
         ld.weak.global.cg.${pftype} _ctmp, [_cptr];
         fma.rn.${pftype} _ctmp, _ctmp, ${float(beta)}, dotp;
         st.weak.global.${pftype} [_cptr], _ctmp;
@@ -112,10 +103,8 @@
         .reg .${pftype} _tmp;
         mov.${pftype} _tmp, ${fzero};
 %    if n is None:
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
         st.weak.global.cg.${pftype} [_cptr], _tmp;
 %    else:
         st.weak.global.cg.${pftype} [c_base + ${ldc*j*dwidth_i}], _tmp;
@@ -125,10 +114,8 @@
     {
         .reg .${pftype} _tmp;
 %    if n is None:
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
         ld.weak.global.cg.${pftype} _tmp, [_cptr];
         mul.${pftype} _tmp, _tmp, ${float(beta)};
         st.weak.global.${pftype} [_cptr], _tmp;

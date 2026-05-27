@@ -13,10 +13,10 @@ bs = bool(block_stealing)
 .shared .align 8 .b64 ${kname}_mbar;
 .shared .align 16 .b8 ${kname}_workid[16];
 % endif
-.global .align 16 .b64 ${kname}_Ag[${m_tiles*k_tiles*32}] = {
+.global .align 16 .b64 ${kname}_Ag[${32 * m_tiles * k_tiles}] = {
     ${', '.join(a_u64)}
 };
-.shared .align 16 .b64 ${kname}_As[${m_tiles*k_tiles*32}];
+.shared .align 16 .b64 ${kname}_As[${32 * m_tiles * k_tiles}];
 
 .visible .entry ${kname}(.param .u64 _b,
                          .param .u64 _c)
@@ -101,8 +101,8 @@ bs = bool(block_stealing)
             .reg .u64 gaddr, saddr;
             .reg .${pftype} v;
             setp.eq.u32 plast, tid, 0;
-            add.u64 gaddr, a_glb_base,  ${(m_tiles*k_tiles*32-1) * dwidth_i};
-            add.u64 saddr, a_smem_base, ${(m_tiles*k_tiles*32-1) * dwidth_i};
+            add.u64 gaddr, a_glb_base,  ${(32 * m_tiles * k_tiles - 1) * dwidth_i};
+            add.u64 saddr, a_smem_base, ${(32 * m_tiles * k_tiles - 1) * dwidth_i};
             @plast ld.weak.global.cg.${pftype} v, [gaddr];
             @plast st.shared.${pftype}    [saddr], v;
         }
@@ -124,7 +124,7 @@ bs = bool(block_stealing)
     .reg .pred pm_${mt};
     {
         .reg .u32 crow;
-        add.u32 crow, r_div4, ${mt * 8};
+        add.u32 crow, r_div4, ${8 * mt};
         setp.lt.u32 pm_${mt}, crow, ${m};
     }
 %  endif
@@ -154,12 +154,12 @@ $L_LOOP:
 % endif
 
 % for nt in range(nn):
-    add.u32 b_col_${nt}, warp_n_base, ${nt * 8};
+    add.u32 b_col_${nt}, warp_n_base, ${8 * nt};
     add.u32 b_col_${nt}, b_col_${nt}, r_div4;
     {
         .reg .u32 t;
         shl.b32 t, r_mod4, 1;
-        add.u32 c_col0_${nt}, warp_n_base, ${nt * 8};
+        add.u32 c_col0_${nt}, warp_n_base, ${8 * nt};
         add.u32 c_col0_${nt}, c_col0_${nt}, t;
         add.u32 c_col1_${nt}, c_col0_${nt}, 1;
     }
@@ -232,7 +232,7 @@ $L_LOOP:
         .reg .pred pbrow;
         {
             .reg .u32 brow;
-            add.u32 brow, r_mod4, ${ki * 4};
+            add.u32 brow, r_mod4, ${4 * ki};
             setp.lt.u32 pbrow, brow, ${k};
         }
 %   endif

@@ -1,6 +1,6 @@
 <%inherit file='base'/>
 
-.global .align 16 .b64 ${kname}_Ag[${m_tiles*k_tiles*32}] = {
+.global .align 16 .b64 ${kname}_Ag[${32 * m_tiles * k_tiles}] = {
     ${', '.join(a_u64)}
 };
 
@@ -44,12 +44,12 @@
     @pwarp_exit bra $L_EXIT;
 
 % for nt in range(nn):
-    add.u32 b_col_${nt}, warp_n_base, ${nt * 8};
+    add.u32 b_col_${nt}, warp_n_base, ${8 * nt};
     add.u32 b_col_${nt}, b_col_${nt}, r_div4;
     {
         .reg .u32 t;
         shl.b32 t, r_mod4, 1;
-        add.u32 c_col0_${nt}, warp_n_base, ${nt * 8};
+        add.u32 c_col0_${nt}, warp_n_base, ${8 * nt};
         add.u32 c_col0_${nt}, c_col0_${nt}, t;
         add.u32 c_col1_${nt}, c_col0_${nt}, 1;
     }
@@ -93,7 +93,7 @@
     .reg .pred pm_${mt};
     {
         .reg .u32 crow;
-        add.u32 crow, r_div4, ${mt * 8};
+        add.u32 crow, r_div4, ${8 * mt};
         setp.lt.u32 pm_${mt}, crow, ${m};
     }
 %  endif
@@ -143,7 +143,7 @@
         .reg .pred pbrow;
         {
             .reg .u32 brow;
-            add.u32 brow, r_mod4, ${ki * 4};
+            add.u32 brow, r_mod4, ${4 * ki};
             setp.lt.u32 pbrow, brow, ${k};
         }
 %   endif

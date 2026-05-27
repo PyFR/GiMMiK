@@ -40,14 +40,11 @@
 ## Main compute: two parallel dot-product streams per thread
 % for j in range(m):
 %  if row_nz[j]:
+    mov.f64 dotp_a, ${fzero};
+    mov.f64 dotp_b, ${fzero};
 %   for kx, jx in row_nz[j]:
-%    if loop.first:
-    mul.f64 dotp_a, bv_a${bix[kx]}, ${jx};
-    mul.f64 dotp_b, bv_b${bix[kx]}, ${jx};
-%    else:
     fma.rn.f64 dotp_a, bv_a${bix[kx]}, ${jx}, dotp_a;
     fma.rn.f64 dotp_b, bv_b${bix[kx]}, ${jx}, dotp_b;
-%    endif
 %   endfor
 %   if beta_zero:
     st.weak.global.cg.v2.f64 [c_base + ${ldc*j*dwidth_i}], {dotp_a, dotp_b};

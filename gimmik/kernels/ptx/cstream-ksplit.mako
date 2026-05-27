@@ -70,45 +70,32 @@ csub_bytes = (ksplit - 1) * csz * blockx * dwidth_i
     setp.ne.u32 p_skip, tid_y, ${bid};
     @p_skip bra $L_END_BID_${bid};
 
-<%
-    loaded = set()
-    kbx_idx = {kx: i for i, kx in enumerate(kbx)}
-%>
+<%  loaded = set() %>
 
 %  for cchunk_i, cchunk in enumerate(cchunks):
 ## Chunk ${cchunk_i}: partial dot-product
 %   for row_idx, j in enumerate(cchunk):
-<%
-        nz = [(kbx_idx[kx], kx, A[j, kx]) for kx in kbx if A[j, kx] != 0]
-        owner_bid = row_idx % ksplit
-%>
-%    for (kxi, kx, jx) in nz:
-%     if kx not in loaded:
+<%      owner_bid = row_idx % ksplit %>
+%    for kxi, kx in enumerate(kbx):
+%     if A[j, kx] != 0 and kx not in loaded:
 %      if n is None:
     {
-        .reg .u32 _boff;
         .reg .u64 _bptr;
-        mul.lo.u32 _boff, ldb, ${kx};
-        mad.wide.u32 _bptr, ${dwidth_i}, _boff, b_base;
+        mad.wide.u32 _bptr, ldb, ${kx * dwidth_i}, b_base;
         ld.weak.global.cg.${pftype} bv${kxi}, [_bptr];
     }
 %      else:
     ld.weak.global.cg.${pftype} bv${kxi}, [b_base + ${ldb*kx*dwidth_i}];
 %      endif
-<%          loaded.add(kx) %>
+<%      loaded.add(kx) %>
 %     endif
 %    endfor
-%    if nz:
-%     for kxi, kx, jx in nz:
-%      if loop.first:
-    mul.${pftype} dotp, bv${kxi}, ${jx};
-%      else:
-    fma.rn.${pftype} dotp, bv${kxi}, ${jx}, dotp;
-%      endif
-%     endfor
-%    else:
     mov.${pftype} dotp, ${fzero};
-%    endif
+%    for kxi, kx in enumerate(kbx):
+%     if A[j, kx] != 0:
+    fma.rn.${pftype} dotp, bv${kxi}, ${A[j, kx]}, dotp;
+%     endif
+%    endfor
 %    if owner_bid == bid:
     mov.${pftype} cv${row_idx // ksplit}, dotp;
 %    else:
@@ -135,10 +122,8 @@ csub_bytes = (ksplit - 1) * csz * blockx * dwidth_i
 %     if beta_zero:
 %      if n is None:
     {
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
         st.weak.global.cg.${pftype} [_cptr], dotp;
     }
 %      else:
@@ -148,10 +133,8 @@ csub_bytes = (ksplit - 1) * csz * blockx * dwidth_i
     {
         .reg .${pftype} _ctmp;
 %      if n is None:
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
         ld.weak.global.cg.${pftype} _ctmp, [_cptr];
         fma.rn.${pftype} _ctmp, _ctmp, ${float(beta)}, dotp;
         st.weak.global.${pftype} [_cptr], _ctmp;

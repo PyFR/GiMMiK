@@ -7,7 +7,6 @@ m_per_group = max(len(mcx) for mcx in mx)
 bsub_bytes = 2 * bsz * blockx * dwidth_i
 def bsub_off(buf, idx):
     return (buf * bsz + idx) * blockx * dwidth_i
-use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
 %>
 
 % if n is None:
@@ -82,15 +81,21 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
     setp.ne.u32 p_skip, tid_y, ${cid};
     @p_skip bra $L_END_CID_${cid};
 
+## Zero accumulators
+%  for j, row_j in enumerate(mcx):
+%   if afix[row_j] != -1:
+    mov.${pftype} csub${j}, ${fzero};
+%   endif
+%  endfor
+
+## Pre-fill double buffer
 %  if use_cpasync:
 ## Async fill of chunk 0
 %   for idx, kx in [(i, k) for i, k in enumerate(bchunks[0]) if i % msplit == cid]:
 %    if n is None:
     {
-        .reg .u32 _boff;
         .reg .u64 _bptr;
-        mul.lo.u32 _boff, ldb, ${kx};
-        mad.wide.u32 _bptr, ${dwidth_i}, _boff, b_base;
+        mad.wide.u32 _bptr, ldb, ${kx * dwidth_i}, b_base;
         cp.async.ca.shared::cta.global [bsub_sm_thread + ${bsub_off(0, idx)}], [_bptr], ${dwidth_i};
     }
 %    else:
@@ -106,10 +111,8 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
     {
         .reg .${pftype} _bv;
 %    if n is None:
-        .reg .u32 _boff;
         .reg .u64 _bptr;
-        mul.lo.u32 _boff, ldb, ${kx};
-        mad.wide.u32 _bptr, ${dwidth_i}, _boff, b_base;
+        mad.wide.u32 _bptr, ldb, ${kx * dwidth_i}, b_base;
         ld.weak.global.cg.${pftype} _bv, [_bptr];
 %    else:
         ld.weak.global.cg.${pftype} _bv, [b_base + ${ldb*kx*dwidth_i}];
@@ -131,10 +134,8 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
 %     if use_cpasync:
 %      if n is None:
     {
-        .reg .u32 _boff;
         .reg .u64 _bptr;
-        mul.lo.u32 _boff, ldb, ${kx};
-        mad.wide.u32 _bptr, ${dwidth_i}, _boff, b_base;
+        mad.wide.u32 _bptr, ldb, ${kx * dwidth_i}, b_base;
         cp.async.ca.shared::cta.global [bsub_sm_thread + ${bsub_off(buf_next, idx)}], [_bptr], ${dwidth_i};
     }
 %      else:
@@ -144,10 +145,8 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
     {
         .reg .${pftype} _bv;
 %      if n is None:
-        .reg .u32 _boff;
         .reg .u64 _bptr;
-        mul.lo.u32 _boff, ldb, ${kx};
-        mad.wide.u32 _bptr, ${dwidth_i}, _boff, b_base;
+        mad.wide.u32 _bptr, ldb, ${kx * dwidth_i}, b_base;
         ld.weak.global.cg.${pftype} _bv, [_bptr];
 %      else:
         ld.weak.global.cg.${pftype} _bv, [b_base + ${ldb*kx*dwidth_i}];
@@ -162,22 +161,21 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
 %   endif
 
 %   for idx, kx in enumerate(bchunks[bb]):
+%    if any(A[row_j, kx] for row_j in mcx):
     ld.shared.${pftype} bv, [bsub_thread + ${bsub_off(buf_cur, idx)}];
+%    endif
 %    for j, row_j in enumerate(mcx):
-<%    jx = A[row_j, kx] %>
-%     if jx != 0 and kx == afix[row_j]:
-    mul.${pftype} csub${j}, bv, ${jx};
-%     elif jx != 0:
-    fma.rn.${pftype} csub${j}, bv, ${jx}, csub${j};
+%     if A[row_j, kx] != 0:
+    fma.rn.${pftype} csub${j}, bv, ${A[row_j, kx]}, csub${j};
 %     endif
+%    endfor
+%    for j, row_j in enumerate(mcx):
 %     if kx == alix[row_j]:
 %      if beta_zero:
 %       if n is None:
     {
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${row_j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${row_j * dwidth_i}, c_base;
         st.weak.global.cg.${pftype} [_cptr], csub${j};
     }
 %       else:
@@ -187,10 +185,8 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
     {
         .reg .${pftype} _ctmp;
 %       if n is None:
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${row_j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${row_j * dwidth_i}, c_base;
         ld.weak.global.cg.${pftype} _ctmp, [_cptr];
         fma.rn.${pftype} _ctmp, _ctmp, ${float(beta)}, csub${j};
         st.weak.global.${pftype} [_cptr], _ctmp;
@@ -222,10 +218,8 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
         .reg .${pftype} _tmp;
         mov.${pftype} _tmp, ${fzero};
 %      if n is None:
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${row_j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${row_j * dwidth_i}, c_base;
         st.weak.global.cg.${pftype} [_cptr], _tmp;
 %      else:
         st.weak.global.cg.${pftype} [c_base + ${ldc*row_j*dwidth_i}], _tmp;
@@ -235,10 +229,8 @@ use_cpasync = cc is not None and (cc[0], cc[1]) >= (8, 0) and dwidth_i in (4, 8)
     {
         .reg .${pftype} _tmp;
 %      if n is None:
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${row_j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${row_j * dwidth_i}, c_base;
         ld.weak.global.cg.${pftype} _tmp, [_cptr];
         mul.${pftype} _tmp, _tmp, ${float(beta)};
         st.weak.global.${pftype} [_cptr], _tmp;

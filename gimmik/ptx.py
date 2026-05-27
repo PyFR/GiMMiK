@@ -49,12 +49,14 @@ class PTXMatMul(MatMul):
                       else '0d0000000000000000'),
             'beta_zero': self.beta == 0,
             'mbar_maxwait': '0x989680',
+            'use_cpasync': cc >= (8, 0),
         }
 
         if self.is_sparse_suitable(self.A, cc):
             yield from self._sparse_kernel_generators(dtype, dsize, base_args)
 
-        if self.is_dense_suitable(self.A, cc):
+        # Dense kernels bake n/ldb/ldc as compile-time constants
+        if self.n is not None and self.is_dense_suitable(self.A, cc):
             yield from self._dense_kernel_generators(dtype, dsize, base_args)
 
     def _sparse_kernel_generators(self, dtype, dsize, base_args):

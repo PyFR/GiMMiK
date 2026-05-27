@@ -53,10 +53,8 @@
 % for i, kx in enumerate(bix):
 %  if n is None:
     {
-        .reg .u32 _boff;
         .reg .u64 _bptr;
-        mul.lo.u32 _boff, ldb, ${kx};
-        mad.wide.u32 _bptr, ${dwidth_i}, _boff, b_base;
+        mad.wide.u32 _bptr, ldb, ${kx * dwidth_i}, b_base;
         ld.weak.global.cg.${pftype} bv${i}, [_bptr];
     }
 %  else:
@@ -64,25 +62,26 @@
 %  endif
 % endfor
 
-% if not beta_zero:
-## Pre-load C so per-row completion is a plain store
+% if beta_zero:
+## Zero accumulators
+%  for j in range(m):
+%   if afix[j] != -1:
+    mov.${pftype} csub${j}, ${fzero};
+%   endif
+%  endfor
+% else:
+## Pre-load C and scale by beta so per-row completion is a plain store
 %  for j in range(m):
 %   if afix[j] != -1:
 %    if n is None:
     {
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
         ld.weak.global.cg.${pftype} csub${j}, [_cptr];
     }
 %    else:
     ld.weak.global.cg.${pftype} csub${j}, [c_base + ${ldc*j*dwidth_i}];
 %    endif
-%   endif
-%  endfor
-%  for j in range(m):
-%   if afix[j] != -1:
     mul.${pftype} csub${j}, csub${j}, ${float(beta)};
 %   endif
 %  endfor
@@ -92,19 +91,15 @@
 % for kx in bix:
 %  for j, jx in enumerate(A[:, kx]):
 %   if jx != 0:
-%    if beta_zero and kx == afix[j]:
-    mul.${pftype} csub${j}, bv${bix[kx]}, ${jx};
-%    else:
     fma.rn.${pftype} csub${j}, bv${bix[kx]}, ${jx}, csub${j};
-%    endif
 %   endif
+%  endfor
+%  for j in range(m):
 %   if kx == alix[j]:
 %    if n is None:
     {
-        .reg .u32 _coff;
         .reg .u64 _cptr;
-        mul.lo.u32 _coff, ldc, ${j};
-        mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
         st.weak.global.cg.${pftype} [_cptr], csub${j};
     }
 %    else:
@@ -123,10 +118,8 @@
 %   if jx == -1 and beta_zero:
 %    if n is None:
         {
-            .reg .u32 _coff;
             .reg .u64 _cptr;
-            mul.lo.u32 _coff, ldc, ${j};
-            mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+            mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
             st.weak.global.cg.${pftype} [_cptr], _tmp;
         }
 %    else:
@@ -136,10 +129,8 @@
 %   elif jx == -1:
 %    if n is None:
         {
-            .reg .u32 _coff;
             .reg .u64 _cptr;
-            mul.lo.u32 _coff, ldc, ${j};
-            mad.wide.u32 _cptr, ${dwidth_i}, _coff, c_base;
+            mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
             ld.weak.global.cg.${pftype} _tmp, [_cptr];
             mul.${pftype} _tmp, _tmp, ${float(beta)};
             st.weak.global.cg.${pftype} [_cptr], _tmp;

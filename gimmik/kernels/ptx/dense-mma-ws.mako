@@ -10,11 +10,11 @@
         mov.u64            a_glb, ${kname}_Ag;
         cvta.to.global.u64 a_glb, a_glb;
         @p_warp_lead cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes
-            [a_smem], [a_glb], ${m_tiles*k_tiles*32 * 8}, [tma_mbar];
+            [a_smem], [a_glb], ${8 * 32 * m_tiles * k_tiles}, [tma_mbar];
         @p_warp_lead cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes
             [b1_smem], [bdesc_addr, {n_start0, 0}], [tma_mbar];
         @p_warp_lead mbarrier.expect_tx.relaxed.cta.shared::cta.b64
-            [tma_mbar], ${b_tile_bytes + m_tiles*k_tiles*32 * 8};
+            [tma_mbar], ${b_tile_bytes + 8 * 32 * m_tiles * k_tiles};
         bar.warp.sync 0xffffffff;
         .reg .b64 state;
         .reg .pred p1;
@@ -97,7 +97,7 @@ $L_WAIT_BRDY:
 %>
         {
             .reg .b32 a_a;
-            add.u32       a_a, a_thr_a, ${(kt * 32 + mt * 32 * k_tiles) * dwidth_i};
+            add.u32       a_a, a_thr_a, ${(32 * kt + 32 * mt * k_tiles) * dwidth_i};
             ld.shared.${pftype} a_f, [a_a];
 %   if k_tail:
             .reg .pred pbrow_${mt}_${kt};
@@ -162,7 +162,7 @@ $L_WAIT_BRDY:
             and.pred p_st, p_st, p_row_${mt};
 %    endif
             .reg .u64 _c_addr;
-            add.u64 _c_addr, c_thr_glob_base, ${(mt * 8 * ldc + nt * 8) * dwidth_i};
+            add.u64 _c_addr, c_thr_glob_base, ${(8 * mt * ldc + 8 * nt) * dwidth_i};
             @p_st st.weak.global.v2.${pftype} [_c_addr], {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
         }
 %   endfor
@@ -321,7 +321,7 @@ $L_WAIT_WUSED:
 $L_AFTER_CTRL:
 </%def>
 
-.global .align 16 .b64 ${kname}_Ag[${m_tiles*k_tiles*32}] = {
+.global .align 16 .b64 ${kname}_Ag[${32 * m_tiles * k_tiles}] = {
     ${', '.join(a_u64)}
 };
 .extern .shared .align 128 .b8 ${kname}_dynm[];
