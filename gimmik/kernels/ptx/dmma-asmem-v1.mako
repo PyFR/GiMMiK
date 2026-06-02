@@ -20,24 +20,24 @@ bs = bool(block_stealing)
 .visible .entry ${kname}(.param .u64 _b,
                          .param .u64 _c)
 {
-    .reg .u32  tid, warp, lane, r_mod4, r_div4;
-    .reg .u64  b_ptr, c_ptr;
-    .reg .u32  warp_n_base;
-    .reg .u64  as_thr_base, b_thr_base, c_thr_base;
+    .reg .u32 tid, warp, lane, r_mod4, r_div4;
+    .reg .u64 b_ptr, c_ptr;
+    .reg .u32 warp_n_base;
+    .reg .u64 as_thr_base, b_thr_base, c_thr_base;
     .reg .pred pwarp_exit;
-    .reg .${pftype}  a_frag;
+    .reg .${pftype} a_frag;
 % if bs:
-    .reg .u32  ctaid;
-    .reg .u32  mbar_a, work_a;
+    .reg .u32 ctaid;
+    .reg .u32 mbar_a, work_a;
     .reg .pred p_root, p_done, p_have;
 % endif
 % for nt in range(nn):
-    .reg .u32  b_col_${nt}, c_col0_${nt}, c_col1_${nt};
+    .reg .u32 b_col_${nt}, c_col0_${nt}, c_col1_${nt};
 %  if not n_col_aligned:
     .reg .pred pvalid_bcol_${nt}, pvalid_c0col_${nt}, pvalid_c1col_${nt};
 %  endif
-    .reg .${pftype}  b_frag_${nt};
-    .reg .${pftype}  c0_${nt}_<${m_tiles}>, c1_${nt}_<${m_tiles}>;
+    .reg .${pftype} b_frag_${nt};
+    .reg .${pftype} c0_${nt}_<${m_tiles}>, c1_${nt}_<${m_tiles}>;
 % endfor
 
     ld.param.u64 b_ptr, [_b];
@@ -62,7 +62,7 @@ bs = bool(block_stealing)
     // Cooperative copy A from .global to .shared
     {
         .reg .u64 a_glb_base, a_smem_base;
-        mov.u64 a_glb_base,  ${kname}_Ag;
+        mov.u64 a_glb_base, ${kname}_Ag;
         cvta.to.global.u64 a_glb_base, a_glb_base;
         mov.u64 a_smem_base, ${kname}_As;
 % for ci in range(copy_v1_iters):
@@ -79,17 +79,17 @@ bs = bool(block_stealing)
             add.u32 eidx, tid, ${base_elem};
             setp.lt.u32 plast, eidx, ${a_elems};
             mul.wide.u32 off64, eidx, ${dwidth_i};
-            add.u64 gaddr, a_glb_base,  off64;
+            add.u64 gaddr, a_glb_base, off64;
             add.u64 saddr, a_smem_base, off64;
             @plast ld.weak.global.cg.${pftype} v, [gaddr];
-            @plast st.shared.${pftype}        [saddr], v;
+            @plast st.shared.${pftype} [saddr], v;
 %  else:
             add.u32 eidx, tid, ${base_elem};
             mul.wide.u32 off64, eidx, ${dwidth_i};
-            add.u64 gaddr, a_glb_base,  off64;
+            add.u64 gaddr, a_glb_base, off64;
             add.u64 saddr, a_smem_base, off64;
             ld.weak.global.cg.${pftype} v, [gaddr];
-            st.shared.${pftype}        [saddr], v;
+            st.shared.${pftype} [saddr], v;
 %  endif
         }
 % endfor
@@ -99,10 +99,10 @@ bs = bool(block_stealing)
     // Lane-only base; lifted out of the optional steal loop
     {
         .reg .u64 t64, a_smem_base, lane64;
-        mov.u64      a_smem_base, ${kname}_As;
-        cvt.u64.u32  lane64, lane;
-        shl.b64      t64, lane64, 3;
-        add.u64      as_thr_base, a_smem_base, t64;
+        mov.u64 a_smem_base, ${kname}_As;
+        cvt.u64.u32 lane64, lane;
+        shl.b64 t64, lane64, 3;
+        add.u64 as_thr_base, a_smem_base, t64;
     }
 
 % for mt in range(m_tiles):
@@ -124,13 +124,13 @@ $L_LOOP:
     {
         .reg .u32 cta;
 % if bs:
-        mov.u32    cta, ctaid;
+        mov.u32 cta, ctaid;
 % else:
-        mov.u32    cta, %ctaid.x;
+        mov.u32 cta, %ctaid.x;
 % endif
         mul.lo.u32 cta, cta, ${n_per_cta};
         mul.lo.u32 warp_n_base, warp, ${n_per_warp};
-        add.u32    warp_n_base, warp_n_base, cta;
+        add.u32 warp_n_base, warp_n_base, cta;
     }
     setp.ge.u32 pwarp_exit, warp_n_base, ${n};
 % if bs:
@@ -150,7 +150,7 @@ $L_LOOP:
         add.u32 c_col1_${nt}, c_col0_${nt}, 1;
     }
 %  if not n_col_aligned:
-    setp.lt.u32 pvalid_bcol_${nt},  b_col_${nt},  ${n};
+    setp.lt.u32 pvalid_bcol_${nt}, b_col_${nt}, ${n};
     setp.lt.u32 pvalid_c0col_${nt}, c_col0_${nt}, ${n};
     setp.lt.u32 pvalid_c1col_${nt}, c_col1_${nt}, ${n};
 %  endif
@@ -159,19 +159,19 @@ $L_LOOP:
     {
         .reg .u64 t64, bcol64;
         mul.wide.u32 t64, r_mod4, ${ldb};
-        cvt.u64.u32  bcol64, b_col_0;
-        add.u64      t64, t64, bcol64;
-        shl.b64      t64, t64, 3;
-        add.u64      b_thr_base, b_ptr, t64;
+        cvt.u64.u32 bcol64, b_col_0;
+        add.u64 t64, t64, bcol64;
+        shl.b64 t64, t64, 3;
+        add.u64 b_thr_base, b_ptr, t64;
     }
 
     {
         .reg .u64 t64, ccol64;
         mul.wide.u32 t64, r_div4, ${ldc};
-        cvt.u64.u32  ccol64, c_col0_0;
-        add.u64      t64, t64, ccol64;
-        shl.b64      t64, t64, 3;
-        add.u64      c_thr_base, c_ptr, t64;
+        cvt.u64.u32 ccol64, c_col0_0;
+        add.u64 t64, t64, ccol64;
+        shl.b64 t64, t64, 3;
+        add.u64 c_thr_base, c_ptr, t64;
     }
 
 % for nt in range(nn):
@@ -188,10 +188,10 @@ $L_LOOP:
 %>
     {
         .reg .u64 caddr;
-        add.u64      caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
+        add.u64 caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
 %    if needs_zero_init:
-        mov.${pftype}      c0_${nt}_${mt}, ${fzero};
-        mov.${pftype}      c1_${nt}_${mt}, ${fzero};
+        mov.${pftype} c0_${nt}_${mt}, ${fzero};
+        mov.${pftype} c1_${nt}_${mt}, ${fzero};
 %    endif
         ${pred_emit(f'ld.weak.global.cg.{pftype} c0_{nt}_{mt}, [caddr];', pm, pvc0, pred_reg=f'p0_{nt}_{mt}')}
         ${pred_emit(f'ld.weak.global.cg.{pftype} c1_{nt}_{mt}, [caddr + {dwidth_i}];', pm, pvc1, pred_reg=f'p1_{nt}_{mt}')}
@@ -246,7 +246,7 @@ $L_LOOP:
 %>
     {
         .reg .u64 caddr;
-        add.u64  caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
+        add.u64 caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
         ${pred_emit(f'st.weak.global.{pftype} [caddr], c0_{nt}_{mt};', pm, pvc0, pred_reg=f'p0s_{nt}_{mt}')}
         ${pred_emit(f'st.weak.global.{pftype} [caddr + {dwidth_i}], c1_{nt}_{mt};', pm, pvc1, pred_reg=f'p1s_{nt}_{mt}')}
     }

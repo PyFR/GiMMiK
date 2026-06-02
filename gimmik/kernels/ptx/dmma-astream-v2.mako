@@ -7,19 +7,19 @@
 .visible .entry ${kname}(.param .u64 _b,
                          .param .u64 _c)
 {
-    .reg .u32  tid, warp, lane, r_mod4, r_div4;
-    .reg .u64  b_ptr, c_ptr;
-    .reg .u32  warp_n_base;
-    .reg .u64  ag_thr_base, b_thr_base, c_thr_base;
+    .reg .u32 tid, warp, lane, r_mod4, r_div4;
+    .reg .u64 b_ptr, c_ptr;
+    .reg .u32 warp_n_base;
+    .reg .u64 ag_thr_base, b_thr_base, c_thr_base;
     .reg .pred pwarp_exit;
-    .reg .${pftype}  a_frag;
+    .reg .${pftype} a_frag;
 % for nt in range(nn):
-    .reg .u32  b_col_${nt}, c_col0_${nt}, c_col1_${nt};
+    .reg .u32 b_col_${nt}, c_col0_${nt}, c_col1_${nt};
 %  if not n_col_aligned:
     .reg .pred pvalid_bcol_${nt}, pvalid_c0col_${nt}, pvalid_c1col_${nt};
 %  endif
-    .reg .${pftype}  b_frag_${nt};
-    .reg .${pftype}  c0_${nt}_<${m_tiles}>, c1_${nt}_<${m_tiles}>;
+    .reg .${pftype} b_frag_${nt};
+    .reg .${pftype} c0_${nt}_<${m_tiles}>, c1_${nt}_<${m_tiles}>;
 % endfor
 
     ld.param.u64 b_ptr, [_b];
@@ -35,10 +35,10 @@
 
     {
         .reg .u32 cta;
-        mov.u32    cta, %ctaid.x;
+        mov.u32 cta, %ctaid.x;
         mul.lo.u32 cta, cta, ${n_per_cta};
         mul.lo.u32 warp_n_base, warp, ${n_per_warp};
-        add.u32    warp_n_base, warp_n_base, cta;
+        add.u32 warp_n_base, warp_n_base, cta;
     }
     setp.ge.u32 pwarp_exit, warp_n_base, ${n};
     @pwarp_exit bra $L_EXIT;
@@ -54,7 +54,7 @@
         add.u32 c_col1_${nt}, c_col0_${nt}, 1;
     }
 %  if not n_col_aligned:
-    setp.lt.u32 pvalid_bcol_${nt},  b_col_${nt},  ${n};
+    setp.lt.u32 pvalid_bcol_${nt}, b_col_${nt}, ${n};
     setp.lt.u32 pvalid_c0col_${nt}, c_col0_${nt}, ${n};
     setp.lt.u32 pvalid_c1col_${nt}, c_col1_${nt}, ${n};
 %  endif
@@ -63,29 +63,29 @@
     // A thread base: &Ag[0] + lane*8
     {
         .reg .u64 t64, a_glb_base, lane64;
-        mov.u64      a_glb_base, ${kname}_Ag;
+        mov.u64 a_glb_base, ${kname}_Ag;
         cvta.to.global.u64 a_glb_base, a_glb_base;
-        cvt.u64.u32  lane64, lane;
-        shl.b64      t64, lane64, 3;
-        add.u64      ag_thr_base, a_glb_base, t64;
+        cvt.u64.u32 lane64, lane;
+        shl.b64 t64, lane64, 3;
+        add.u64 ag_thr_base, a_glb_base, t64;
     }
 
     {
         .reg .u64 t64, bcol64;
         mul.wide.u32 t64, r_mod4, ${ldb};
-        cvt.u64.u32  bcol64, b_col_0;
-        add.u64      t64, t64, bcol64;
-        shl.b64      t64, t64, 3;
-        add.u64      b_thr_base, b_ptr, t64;
+        cvt.u64.u32 bcol64, b_col_0;
+        add.u64 t64, t64, bcol64;
+        shl.b64 t64, t64, 3;
+        add.u64 b_thr_base, b_ptr, t64;
     }
 
     {
         .reg .u64 t64, ccol64;
         mul.wide.u32 t64, r_div4, ${ldc};
-        cvt.u64.u32  ccol64, c_col0_0;
-        add.u64      t64, t64, ccol64;
-        shl.b64      t64, t64, 3;
-        add.u64      c_thr_base, c_ptr, t64;
+        cvt.u64.u32 ccol64, c_col0_0;
+        add.u64 t64, t64, ccol64;
+        shl.b64 t64, t64, 3;
+        add.u64 c_thr_base, c_ptr, t64;
     }
 
 % for mt in range(m_tiles):
@@ -111,10 +111,10 @@
 %>
     {
         .reg .u64 caddr;
-        add.u64      caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
+        add.u64 caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
 %    if needs_zero_init:
-        mov.${pftype}      c0_${nt}_${mt}, ${fzero};
-        mov.${pftype}      c1_${nt}_${mt}, ${fzero};
+        mov.${pftype} c0_${nt}_${mt}, ${fzero};
+        mov.${pftype} c1_${nt}_${mt}, ${fzero};
 %    endif
         ${pred_emit(f'ld.weak.global.cg.v2.{pftype} {{c0_{nt}_{mt}, c1_{nt}_{mt}}}, [caddr];', pm, pred_reg=f'p01_{nt}_{mt}')}
     }
@@ -166,7 +166,7 @@
 %>
     {
         .reg .u64 caddr;
-        add.u64  caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
+        add.u64 caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
         ${pred_emit(f'st.weak.global.v2.{pftype} [caddr], {{c0_{nt}_{mt}, c1_{nt}_{mt}}};', pm, pred_reg=f'p01s_{nt}_{mt}')}
     }
 %  endfor

@@ -16,7 +16,7 @@ class PTXMatMul(MatMul):
     }
 
     # Map Supported CC -> Minimum PTX version
-    PTX_SM = {(8, 0): (7, 0), (9, 0): (8, 0), (10, 0): (8, 7), (10, 3): (8, 7),
+    PTX_SM = {(8, 0): (7, 0), (9, 0): (8, 6), (10, 0): (8, 7), (10, 3): (8, 7),
               (12, 0): (8, 7), (12, 1): (8, 7)}
 
     PTX_TEMPLATE_FAMILY = {
@@ -28,6 +28,7 @@ class PTXMatMul(MatMul):
         'dmma-astream': 'dense',
         'dmma-asmem': 'dense',
         'dmma-steal-ws': 'dense',
+        'dmma-stride-ws': 'dense',
     }
 
     def __init__(self, *args, **kwargs):
@@ -206,9 +207,12 @@ class PTXMatMul(MatMul):
             cfg = self._sparse_args(tpl, params, block, dtype, dsize,
                                     base_args, base_meta)
         elif self.PTX_TEMPLATE_FAMILY[tpl] == 'dense':
-            if tpl.endswith('ws'):
-                cfg = self._dense_ws_args(kernel_cfg, params, smem_info,
-                                          base_args, base_meta)
+            if tpl == 'dmma-steal-ws':
+                cfg = self._dense_steal_ws_args(kernel_cfg, params, smem_info,
+                                                base_args, base_meta)
+            elif tpl == 'dmma-stride-ws':
+                cfg = self._dense_stride_ws_args(kernel_cfg, params, smem_info,
+                                                 base_args, base_meta)
             else:
                 cfg = self._dense_args(kernel_cfg, params, base_args,
                                        base_meta)
@@ -307,7 +311,7 @@ class PTXMatMul(MatMul):
             'block_stealing': block_steal,
         }
 
-    def _dense_ws_args(self, kernel_cfg, params, smem_info, args, meta):
+    def _dense_steal_ws_args(self, kernel_cfg, params, smem_info, args, meta):
         dynamic_max = smem_info[1]
         nn = params['nn']
         warp_map = kernel_cfg['warp_map']
@@ -346,6 +350,57 @@ class PTXMatMul(MatMul):
         args |= setup | ws_setup | offsets
         meta |= {
             'grid': (-(-self.n // n_per_cta), 1, 1),
+            'ws_b_tile': (n_per_cta, setup['k_pad']),
+            'dynamic_shared': ws_setup['dynm_total_bytes'],
+        }
+        if self.beta != 0:
+            meta['ws_out_tile'] = (n_per_cta, setup['m_pad'])
+        return kernel_cfg['template'], args, meta
+
+    def _dense_stride_ws_args(self, kernel_cfg, params, smem_info, args, meta):
+        dynamic_max = smem_info[1]
+        nn = params['nn']
+        stride_iters = params['iters']
+        warp_map = kernel_cfg['warp_map']
+        n_comp_warps = warp_map['compute_count']
+        n_per_cta = 8 * nn * n_comp_warps
+        if n_per_cta > self.n:
+            return None
+
+        setup = self._dense_common(nn, n_comp_warps, False)
+
+        # Warp Specialism Setup
+        b_tile_bytes = setup['k_pad'] * n_per_cta * 8
+        c_tile_bytes = setup['m_pad'] * n_per_cta * 8
+        a_bytes = setup['m_tiles'] * setup['k_tiles'] * 32 * 8
+
+        regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
+                   ('c', c_tile_bytes), ('a', a_bytes)]
+        mbars = ('tma', 'bready', 'bconsumed', 'cready', 'cstored')
+        offsets, dynm_total_bytes = self._dsmem_alloc(regions, mbars)
+
+        work_blocks = -(-self.n // n_per_cta)
+        grid_stride = -(-work_blocks // stride_iters)
+        ws_setup = {
+            'n_comp_warps': n_comp_warps,
+            'blockx_total': 32 * (n_comp_warps + 1),
+            'prod_warp': warp_map['producer'],
+            'comp_threads': 32 * n_comp_warps,
+            'b_tile_bytes': b_tile_bytes,
+            'c_mtile_smem_stride': 8 * n_per_cta * 8,
+            'c_ntile_smem_stride': 8 * 8,
+            'stride_iters': stride_iters,
+            'grid_stride': grid_stride,
+            'work_blocks': work_blocks,
+            'dynm_total_bytes': dynm_total_bytes,
+        }
+
+        if ws_setup['dynm_total_bytes'] > dynamic_max:
+            return None
+
+        args |= setup | ws_setup | offsets
+        meta |= {
+            'grid': (grid_stride, 1, 1),
             'ws_b_tile': (n_per_cta, setup['k_pad']),
             'dynamic_shared': ws_setup['dynm_total_bytes'],
         }
