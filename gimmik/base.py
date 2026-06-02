@@ -103,14 +103,7 @@ class MatMul:
             raise ValueError('Invalid floating point data type')
 
         # Common template arguments
-        baseargs = {
-            'dtype': dtype, 'kname': kname,
-            'A': self.A, 'beta': self.beta, 'width': 1,
-            'm': self.m, 'n': self.n, 'k': self.k,
-            'ldb': self.ldb, 'ldc': self.ldc,
-            'afix': self.afix, 'alix': self.alix, 'bix': self.bix,
-            'dot': _dot, 'partition': _partition, 'chunk': _chunk
-        }
+        baseargs = self._base_template_args(dtype, kname)
 
         # Incrementally generate and render the kernels
         gen = self._kernel_generators(dtype, dsize, **kwargs)
@@ -135,6 +128,16 @@ class MatMul:
                 resp = yield (src, meta)
         except StopIteration:
             pass
+
+    def _base_template_args(self, dtype, kname):
+        return {
+            'dtype': dtype, 'kname': kname,
+            'A': self.A, 'beta': self.beta, 'width': 1,
+            'm': self.m, 'n': self.n, 'k': self.k,
+            'ldb': self.ldb, 'ldc': self.ldc,
+            'afix': self.afix, 'alix': self.alix, 'bix': self.bix,
+            'dot': _dot, 'partition': _partition, 'chunk': _chunk
+        }
 
     def _process_meta(self, meta):
         pass

@@ -1,0 +1,362 @@
+{
+  "schema": 1,
+  "cc": [
+    9,
+    0
+  ],
+  "ptx": [
+    8,
+    0
+  ],
+  "kernels": [
+    {
+      "template": "cstream-ksplit",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 20
+      },
+      "descriptor": "cstream-ksplit/k2-c20-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "block": [
+        32,
+        8,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 24
+      },
+      "descriptor": "bstream-msplit/m8-b24-x32"
+    },
+    {
+      "template": "cstream-ksplit",
+      "block": [
+        32,
+        4,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 24
+      },
+      "descriptor": "cstream-ksplit/k4-c24-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "block": [
+        64,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 32
+      },
+      "descriptor": "bstream-msplit/m2-b32-x64"
+    },
+    {
+      "template": "bstream",
+      "block": [
+        64,
+        1,
+        1
+      ],
+      "width": 1,
+      "descriptor": "bstream/x64"
+    },
+    {
+      "template": "bstream-msplit",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 32
+      },
+      "descriptor": "bstream-msplit/m2-b32-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "block": [
+        32,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 24
+      },
+      "descriptor": "bstream-msplit/m1-b24-x32"
+    },
+    {
+      "template": "cstream-ksplit",
+      "block": [
+        32,
+        4,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 16
+      },
+      "descriptor": "cstream-ksplit/k4-c16-x32"
+    },
+    {
+      "template": "dmma-asmem",
+      "vector_width": 2,
+      "block": [
+        256,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 1,
+        "warps": 8
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-asmem/v2/nn1-w8"
+    },
+    {
+      "template": "dmma-astream",
+      "vector_width": 2,
+      "block": [
+        64,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 2,
+        "warps": 2
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream/v2/nn2-w2"
+    },
+    {
+      "template": "dmma-astream",
+      "vector_width": 2,
+      "block": [
+        32,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 4,
+        "warps": 1
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream/v2/nn4-w1"
+    },
+    {
+      "template": "dmma-asmem",
+      "vector_width": 2,
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 2,
+        "warps": 4
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-asmem/v2/nn2-w4"
+    },
+    {
+      "template": "dmma-astream",
+      "vector_width": 2,
+      "block": [
+        256,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 1,
+        "warps": 8
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream/v2/nn1-w8"
+    },
+    {
+      "template": "dmma-asmem",
+      "vector_width": 2,
+      "block": [
+        256,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 2,
+        "warps": 8
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-asmem/v2/nn2-w8"
+    },
+    {
+      "template": "dmma-asmem",
+      "vector_width": 2,
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 4,
+        "warps": 4
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-asmem/v2/nn4-w4"
+    },
+    {
+      "template": "dmma-astream",
+      "vector_width": 2,
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 1,
+        "warps": 4
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream/v2/nn1-w4"
+    }
+  ]
+}

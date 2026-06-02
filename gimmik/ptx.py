@@ -1,3 +1,6 @@
+import json
+import pkgutil
+
 import numpy as np
 
 from gimmik.base import MatMul
@@ -15,6 +18,21 @@ class PTXMatMul(MatMul):
     # Map Supported CC -> Minimum PTX version
     PTX_SM = {(8, 0): (7, 0), (9, 0): (8, 0), (10, 0): (8, 7), (10, 3): (8, 7),
               (12, 0): (8, 7), (12, 1): (8, 7)}
+
+    PTX_TEMPLATE_FAMILY = {
+        'cstream': 'sparse',
+        'bstream': 'sparse',
+        'bstream-msplit': 'sparse',
+        'cstream-ksplit': 'sparse',
+        'cstream-w2': 'sparse',
+        'dmma-astream': 'dense',
+        'dmma-asmem': 'dense',
+        'dmma-steal-ws': 'dense',
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._config_cache = {}
 
     @classmethod
     def is_sparse_suitable(cls, arr, cc):
@@ -36,201 +54,216 @@ class PTXMatMul(MatMul):
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
                            smem_info=None):
         cc = compute_capability or (0, 0)
-        ptx = self.PTX_SM.get(cc, (0, 0))
         smem_info = smem_info or (48*1024, 48*1024)
+        config = self._cc_config(cc)
+
+        for kernel_cfg in config['kernels']:
+            if not self._usable_config(kernel_cfg, dtype, cc, smem_info):
+                continue
+
+            prepared = self._get_render_args(
+                kernel_cfg, dtype, dsize, cc, smem_info, tuple(config['ptx'])
+            )
+            if prepared is not None:
+                yield prepared
+
+    def render_config(self, kernel_cfg, dtype, dsize, *, kname='gimmik_mm',
+                      compute_capability=None, smem_info=None, config=None):
+        cc = compute_capability or (0, 0)
+        smem_info = smem_info or (48*1024, 48*1024)
+        config = config or self._cc_config(cc)
+
+        if not self._usable_config(kernel_cfg, dtype, cc, smem_info):
+            return None
+
+        prepared = self._get_render_args(
+            kernel_cfg, dtype, dsize, cc, smem_info, tuple(config['ptx'])
+        )
+        if prepared is None:
+            return None
+        tplname, exargs, exmeta = prepared
+
+        args = self._base_template_args(dtype, kname) | exargs
+        meta = self.basemeta | exmeta
+        meta['tplname'] = tplname
+        self._process_meta(meta)
+        src = self._render_kernel(dtype, tplname, args)
+        return src, args, meta
+
+    def _cc_config(self, cc):
+        cc = cc or (0, 0)
+        if cc not in self._config_cache:
+            cfgname = f'sm{cc[0]}{cc[1]}.json'
+            paths = [f'kernels/ptx/config/{cfgname}',
+                    'kernels/ptx/config/default.json']
+
+            cfg = None
+            for path in paths:
+                try:
+                    cfgdir = pkgutil.get_data('gimmik', path)
+                    cfg = json.loads(cfgdir.decode('utf-8'))
+                    break
+                except FileNotFoundError:
+                    continue
+                except json.JSONDecodeError as e:
+                    raise ValueError(f'{path}: invalid JSON: {exc}') from e
+
+            if cfg is None:
+                raise ValueError('PTX default kernel config is missing')
+            self._config_cache[cc] = cfg
+        return self._config_cache[cc]
+
+    def _matmul_stats(self, dtype, cc, smem_info):
+        nnz = int(np.count_nonzero(self.A))
+        return {
+            'dtype': dtype,
+            'm': self.m,
+            'k': self.k,
+            'n': self.n,
+            'beta': self.beta,
+            'beta_zero': self.beta == 0,
+            'aligne': self.aligne,
+            'nnz': nnz,
+            'density': nnz / self.A.size,
+            'unique_abs': int(len(np.unique(np.abs(self.A)))),
+            'k_used': len(self.bix),
+            'cc': list(cc),
+            'smem_static': smem_info[0],
+            'smem_dynamic': smem_info[1],
+        }
+
+    def _eval_condition(self, condition, stats):
+        if 'all' in condition:
+            return all(self._eval_condition(c, stats) for c in condition['all'])
+        if 'any' in condition:
+            return any(self._eval_condition(c, stats) for c in condition['any'])
+        if 'not' in condition:
+            return not self._eval_condition(condition['not'], stats)
+
+        value = stats[condition['field']]
+        op = next(k for k in condition if k != 'field')
+        expected = condition[op]
+
+        return {
+            'eq': lambda: value == expected,
+            'ne': lambda: value != expected,
+            'lt': lambda: value is not None and value < expected,
+            'lte': lambda: value is not None and value <= expected,
+            'gt': lambda: value is not None and value > expected,
+            'gte': lambda: value is not None and value >= expected,
+            'in': lambda: value in expected,
+            'is_null': lambda: value is None,
+            'is_not': lambda: value is not None,
+            'divisible_by': lambda: value is not None and value % expected == 0,
+            'is_null_or_divisible_by': lambda: (value is None
+                                                or value % expected == 0),
+        }[op]()
+
+    def _usable_config(self, kernel_cfg, dtype, cc, smem_info):
+        tpl = kernel_cfg['template']
+        family = self.PTX_TEMPLATE_FAMILY[tpl]
+
+        if family == 'sparse' and not self.is_sparse_suitable(self.A, cc):
+            return False
+        elif (family == 'dense'
+              and (self.n is None or not self.is_dense_suitable(self.A, cc))):
+            return False
+
+        condition = kernel_cfg.get('conditions')
+        if condition is None:
+            return True
+        else:
+            stats = self._matmul_stats(dtype, cc, smem_info)
+            return self._eval_condition(condition, stats)
+
+    def _get_render_args(self, kernel_cfg, dtype, dsize, cc, smem_info,
+                         ptx):
+        tpl = kernel_cfg['template']
+        block = tuple(kernel_cfg['block'])
+        width = kernel_cfg['width']
+        params = kernel_cfg.get('params', {})
         base_args = {
             'ptx': ptx,
             'cc': cc,
             'smem_info': smem_info,
             'pred_emit': self._pred_emit,
             'pftype': 'f32' if dtype == 'float' else 'f64',
-            'dwidth_i': 4 if dtype == 'float' else 8,
+            'dwidth_i': dsize,
             'fzero': ('0f00000000' if dtype == 'float'
                       else '0d0000000000000000'),
             'beta_zero': self.beta == 0,
             'mbar_maxwait': '0x989680',
             'use_cpasync': cc >= (8, 0),
+            'width': width,
+        }
+        base_meta = {
+            'block': block,
+            'width': width,
+            'desc': kernel_cfg['descriptor'],
         }
 
-        if self.is_sparse_suitable(self.A, cc):
-            yield from self._sparse_kernel_generators(dtype, dsize, base_args)
-
-        # Dense kernels bake n/ldb/ldc as compile-time constants
-        if self.n is not None and self.is_dense_suitable(self.A, cc):
-            yield from self._dense_kernel_generators(dtype, dsize, base_args)
-
-    def _sparse_kernel_generators(self, dtype, dsize, base_args):
-        # Sparse-shared template constants
-        base_args = base_args | {
-            'has_zero_rows': bool(self.has_zero_rows),
-            'row_nz': [[(kx, self.A[j, kx]) for kx in range(self.k)
-                        if self.A[j, kx] != 0] for j in range(self.m)],
-        }
-
-        # B loading, C streaming kernel
-        yield ('cstream', base_args, {'desc': 'cstream'})
-
-        # B streaming, C accumulation kernel
-        yield ('bstream', base_args, {'desc': 'bstream'})
-
-        # Four-way m-split B streaming, C accumulation kernel
-        ms, bsz, blkx = 4, 24, 32
-        args = base_args | {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
-        meta = {
-            'block': (blkx, ms, 1),
-            'shared': 2*bsz*blkx*dsize,
-            'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}',
-        }
-        yield ('bstream-msplit', args, meta)
-
-        # Single-warp LDGSTS variant for medium-M beta=0 large-K cases
-        if self.beta == 0 and self.m <= 320 and len(self.bix) >= 64:
-            ms, bsz, blkx = 1, 32, 64
-            args = base_args | {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
-            meta = {
-                'block': (blkx, ms, 1),
-                'shared': 2*bsz*blkx*dsize,
-                'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}',
-            }
-            yield ('bstream-msplit', args, meta)
-
-        # Two-way k-split B loading, C streaming kernel
-        ks, csz, blkx = 2, 24, 32
-        args = base_args | {'ksplit': ks, 'csz': csz, 'blockx': blkx}
-        meta = {
-            'block': (blkx, ks, 1),
-            'shared': (ks - 1)*csz*blkx*dsize,
-            'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}',
-        }
-        yield ('cstream-ksplit', args, meta)
-
-        # Four-way k-split for large K
-        K_used = len(self.bix)
-        if K_used > 500:
-            ks, csz, blkx = 4, 20, 32
-            args = base_args | {'ksplit': ks, 'csz': csz, 'blockx': blkx}
-            meta = {
-                'block': (blkx, ks, 1),
-                'shared': (ks - 1)*csz*blkx*dsize,
-                'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}',
-            }
-            yield ('cstream-ksplit', args, meta)
-
-        # Width-2 vector cstream for fp64 small-K
-        if (dtype == 'double' and self.n is not None and self.n % 2 == 0
-                and K_used <= 100
-                and (self.aligne is None or self.aligne % 2 == 0)):
-            blkx = 128
-            args = base_args | {'blockx': blkx}
-            meta = {
-                'block': (blkx, 1, 1),
-                'width': 2,
-                'desc': f'cstream-w2/x{blkx}',
-            }
-            yield ('cstream-w2', args, meta)
-
-    def _dense_kernel_generators(self, dtype, dsize, base_args):
-        cc = base_args['cc'] or (0, 0)
-
-        # Block stealing requires sm_100+
-        block_steal = cc >= (10, 0)
-        if block_steal:
-            dense_configs = [('dense-mma-smem-gA', 4, 4)]
+        if self.PTX_TEMPLATE_FAMILY[tpl] == 'sparse':
+            cfg = self._sparse_args(tpl, params, block, dtype, dsize,
+                                    base_args, base_meta)
+        elif self.PTX_TEMPLATE_FAMILY[tpl] == 'dense':
+            if tpl.endswith('ws'):
+                cfg = self._dense_ws_args(kernel_cfg, params, smem_info,
+                                          base_args, base_meta)
+            else:
+                cfg = self._dense_args(kernel_cfg, params, base_args,
+                                       base_meta)
         else:
-            dense_configs = [
-                ('dense-mma-smem-gA', 1, 8),
-                ('dense-mma-smem-gA', 2, 4),
-                ('dense-mma-smem-gA', 4, 4),
-                ('dense-mma-gAd', 2, 2),
-                ('dense-mma-gAd', 4, 2),
-            ]
+            raise ValueError(f'Unknown PTX template family for {tpl}')
 
-        for tpl, nn, w in dense_configs:
-            if (n_per_cta := 8 * nn * w) > self.n:
-                continue
-            setup = self._dense_mma_setup(nn, w, block_steal)
-            blkx = 32 * w
-            args = base_args | setup
-            meta = {
-                'block': (blkx, 1, 1),
-                'grid': (-(-self.n // n_per_cta), 1, 1),
-                'desc': f'{tpl}/nn{nn}-w{w}{'-bs' if block_steal else ''}',
-            }
-            yield (tpl, args, meta)
+        return cfg
 
-        # Warp-specialised dense DMMA, required block stealing
-        if block_steal:
-            yield from self._dense_ws_kernel_generators(dtype, dsize, base_args)
+    def _sparse_args(self, tpl, params, block, dtype, dsize, args,
+                     meta):
+        blockx = block[0]
+        args |= {'has_zero_rows': bool(self.has_zero_rows),
+                 'row_nz': [[(kx, self.A[j, kx]) for kx in range(self.k)
+                     if self.A[j, kx] != 0] for j in range(self.m)],
+                }
 
-    def _dense_ws_kernel_generators(self, dtype, dsize, base_args):
-        static_max, dynamic_max = base_args['smem_info']
+        match tpl:
+            case 'cstream' | 'bstream':
+                pass
+            case 'bstream-msplit':
+                msplit = block[1]
+                bsz = params['bsz']
+                args |= {'msplit': msplit, 'bsz': bsz, 'blockx': blockx}
+                meta['shared'] = 2*bsz*blockx*dsize
+            case 'cstream-ksplit':
+                ksplit = block[1]
+                csz = params['csz']
+                args |= {'ksplit': ksplit, 'csz': csz, 'blockx': blockx}
+                meta['shared'] = (ksplit - 1)*csz*blockx*dsize
+            case _:
+                args['blockx'] = blockx
+        return tpl, args, meta
 
-        # (nn, compute) -- block has compute + 2 warps (producer, stealer)
-        ws_configs = [(1, 4), (2, 4), (4, 4)]
-        for nn, w in ws_configs:
-            if (n_per_cta := 8 * nn * w) > self.n:
-                continue
+    def _dense_args(self, kernel_cfg, params, args, meta):
+        nn = params['nn']
+        warps = params['warps']
+        n_per_cta = 8 * nn * warps
+        if n_per_cta > self.n:
+            return None
 
-            setup = self._dense_mma_setup(nn, w, True)
-            ws_setup = self._dense_ws_setup(setup, w)
+        vector_width = kernel_cfg['vector_width']
+        if (vector_width == 2
+                and (self.aligne is None or self.aligne % 2
+                     or self.n % (8 * nn))):
+            return None
 
-            if ws_setup['dynm_total_bytes'] > dynamic_max:
-                continue
+        block_steal = bool(params.get('block_stealing', False))
+        setup = self._dense_common(nn, warps, block_steal)
+        tpl = f"{kernel_cfg['template']}-v{vector_width}"
+        args |= setup
+        meta['grid'] = (-(-self.n // n_per_cta), 1, 1)
 
-            blkx = 32 * (w + 2)
-            args = base_args | setup | ws_setup
-            meta = {
-                'block': (blkx, 1, 1),
-                'grid': (-(-self.n // n_per_cta), 1, 1),
-                'desc': f'dense-mma-ws/nn{nn}-w{w}',
-                'ws_b_tile': (n_per_cta, setup['k_pad']),
-                'dynamic_shared': ws_setup['dynm_total_bytes'],
-            }
-            if self.beta != 0:
-                meta |= {'ws_out_tile': (n_per_cta, setup['m_pad'])}
-            yield ('dense-mma-ws', args, meta)
+        return tpl, args, meta
 
-    @staticmethod
-    def _dsmem_alloc(regions, mbars, align=16):
-        out, off = {}, 0
-        for name, size in regions:
-            off = (off + align - 1) & ~(align - 1)
-            out[f'{name}_off'] = off
-            off += size
-        for name in mbars:
-            out[f'{name}_mbar_off'] = off
-            off += 8
-        total = (off + align - 1) & ~(align - 1)
-        return out, total
-
-    @classmethod
-    def _dense_ws_setup(cls, setup, n_comp_warps):
-        n_per_cta = setup['n_per_cta']
-        b_tile_bytes = setup['k_pad'] * n_per_cta * 8
-        c_tile_bytes = setup['m_pad'] * n_per_cta * 8
-        a_bytes = setup['m_tiles'] * setup['k_tiles'] * 32 * 8
-
-        regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
-                   ('c', c_tile_bytes), ('a', a_bytes), ('wid', 16)]
-        mbars = ('tma', 'bready', 'cready', 'cstored',
-                 'steal', 'wid_new', 'wid_used')
-        offsets, dynm_total_bytes = cls._dsmem_alloc(regions, mbars)
-
-        args = {
-            'n_comp_warps': n_comp_warps,
-            'blockx_total': 32 * (n_comp_warps + 2),
-            'prod_warp': n_comp_warps,
-            'steal_warp': n_comp_warps + 1,
-            'comp_threads': 32 * n_comp_warps,
-            'b_tile_bytes': b_tile_bytes,
-            'c_mtile_smem_stride': 8 * n_per_cta * 8,
-            'c_ntile_smem_stride': 8 * 8,
-            'dynm_total_bytes': dynm_total_bytes,
-        }
-
-        return offsets | args
-
-    def _dense_mma_setup(self, nn, warps_per_cta, block_steal):
+    def _dense_common(self, nn, warps_per_cta, block_steal):
         a = self.A
         m, k = a.shape
         m_tiles = (m + 7) // 8
@@ -273,6 +306,65 @@ class PTXMatMul(MatMul):
             'pm_runtime': pm_runtime,
             'block_stealing': block_steal,
         }
+
+    def _dense_ws_args(self, kernel_cfg, params, smem_info, args, meta):
+        dynamic_max = smem_info[1]
+        nn = params['nn']
+        warp_map = kernel_cfg['warp_map']
+        n_comp_warps = warp_map['compute_count']
+        n_per_cta = 8 * nn * n_comp_warps
+        if n_per_cta > self.n:
+            return None
+
+        setup = self._dense_common(nn, n_comp_warps, True)
+
+        # Warp Specialism Setup
+        b_tile_bytes = setup['k_pad'] * n_per_cta * 8
+        c_tile_bytes = setup['m_pad'] * n_per_cta * 8
+        a_bytes = setup['m_tiles'] * setup['k_tiles'] * 32 * 8
+
+        regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
+                   ('c', c_tile_bytes), ('a', a_bytes), ('wid', 16)]
+        mbars = ('tma', 'bready', 'cready', 'cstored',
+                 'steal', 'wid_new', 'wid_used')
+        offsets, dynm_total_bytes = self._dsmem_alloc(regions, mbars)
+        ws_setup = {
+            'n_comp_warps': n_comp_warps,
+            'blockx_total': 32 * (n_comp_warps + 2),
+            'prod_warp': warp_map['producer'],
+            'steal_warp': warp_map['stealer'],
+            'comp_threads': 32 * n_comp_warps,
+            'b_tile_bytes': b_tile_bytes,
+            'c_mtile_smem_stride': 8 * n_per_cta * 8,
+            'c_ntile_smem_stride': 8 * 8,
+            'dynm_total_bytes': dynm_total_bytes,
+        }
+
+        if ws_setup['dynm_total_bytes'] > dynamic_max:
+            return None
+
+        args |= setup | ws_setup | offsets
+        meta |= {
+            'grid': (-(-self.n // n_per_cta), 1, 1),
+            'ws_b_tile': (n_per_cta, setup['k_pad']),
+            'dynamic_shared': ws_setup['dynm_total_bytes'],
+        }
+        if self.beta != 0:
+            meta['ws_out_tile'] = (n_per_cta, setup['m_pad'])
+        return kernel_cfg['template'], args, meta
+
+    @staticmethod
+    def _dsmem_alloc(regions, mbars, align=16):
+        out, off = {}, 0
+        for name, size in regions:
+            off = (off + align - 1) & ~(align - 1)
+            out[f'{name}_off'] = off
+            off += size
+        for name in mbars:
+            out[f'{name}_mbar_off'] = off
+            off += 8
+        total = (off + align - 1) & ~(align - 1)
+        return out, total
 
     @staticmethod
     def _pred_emit(instr, *preds, pred_reg=None, indent=' ' * 8):

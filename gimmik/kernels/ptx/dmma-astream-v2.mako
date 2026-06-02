@@ -107,9 +107,7 @@
 %   else:
 <%
     pm = f'pm_{mt}' if pm_runtime(mt) else None
-    pvc0 = f'pvalid_c0col_{nt}' if not n_col_aligned else None
-    pvc1 = f'pvalid_c1col_{nt}' if not n_col_aligned else None
-    needs_zero_init = pm is not None or pvc0 is not None or pvc1 is not None
+    needs_zero_init = pm is not None
 %>
     {
         .reg .u64 caddr;
@@ -118,8 +116,7 @@
         mov.${pftype}      c0_${nt}_${mt}, ${fzero};
         mov.${pftype}      c1_${nt}_${mt}, ${fzero};
 %    endif
-        ${pred_emit(f'ld.weak.global.cg.{pftype} c0_{nt}_{mt}, [caddr];', pm, pvc0, pred_reg=f'p0_{nt}_{mt}')}
-        ${pred_emit(f'ld.weak.global.cg.{pftype} c1_{nt}_{mt}, [caddr + {dwidth_i}];', pm, pvc1, pred_reg=f'p1_{nt}_{mt}')}
+        ${pred_emit(f'ld.weak.global.cg.v2.{pftype} {{c0_{nt}_{mt}, c1_{nt}_{mt}}}, [caddr];', pm, pred_reg=f'p01_{nt}_{mt}')}
     }
 %   endif
 %  endfor
@@ -162,18 +159,15 @@
 %  endfor
 % endfor
 
-% for nt in range(nn):
-%  for mt in range(m_tiles):
+% for mt in range(m_tiles):
+%  for nt in range(nn):
 <%
     pm = f'pm_{mt}' if pm_runtime(mt) else None
-    pvc0 = f'pvalid_c0col_{nt}' if not n_col_aligned else None
-    pvc1 = f'pvalid_c1col_{nt}' if not n_col_aligned else None
 %>
     {
         .reg .u64 caddr;
         add.u64  caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
-        ${pred_emit(f'st.weak.global.{pftype} [caddr], c0_{nt}_{mt};', pm, pvc0, pred_reg=f'p0s_{nt}_{mt}')}
-        ${pred_emit(f'st.weak.global.{pftype} [caddr + {dwidth_i}], c1_{nt}_{mt};', pm, pvc1, pred_reg=f'p1s_{nt}_{mt}')}
+        ${pred_emit(f'st.weak.global.v2.{pftype} [caddr], {{c0_{nt}_{mt}, c1_{nt}_{mt}}};', pm, pred_reg=f'p01s_{nt}_{mt}')}
     }
 %  endfor
 % endfor
