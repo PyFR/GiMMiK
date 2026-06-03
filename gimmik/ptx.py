@@ -26,6 +26,7 @@ class PTXMatMul(MatMul):
         'cstream-ksplit': 'sparse',
         'cstream-w2': 'sparse',
         'dmma-astream': 'dense',
+        'dmma-astream-msplit': 'dense',
         'dmma-asmem': 'dense',
         'dmma-steal-ws': 'dense',
         'dmma-stride-ws': 'dense',
@@ -213,6 +214,10 @@ class PTXMatMul(MatMul):
             elif tpl == 'dmma-stride-ws':
                 cfg = self._dense_stride_ws_args(kernel_cfg, params, smem_info,
                                                  base_args, base_meta)
+            elif tpl == 'dmma-astream-msplit':
+                cfg = self._dense_astream_msplit_args(kernel_cfg, params,
+                                                      smem_info, base_args,
+                                                      base_meta)
             else:
                 cfg = self._dense_args(kernel_cfg, params, base_args,
                                        base_meta)
@@ -407,6 +412,64 @@ class PTXMatMul(MatMul):
         if self.beta != 0:
             meta['ws_out_tile'] = (n_per_cta, setup['m_pad'])
         return kernel_cfg['template'], args, meta
+
+    def _dense_astream_msplit_args(self, kernel_cfg, params, smem_info, args,
+                                   meta):
+        dynamic_max = smem_info[1]
+        nn = params.get('nn')
+        warps = params.get('warps')
+        msplit = params.get('msplit')
+        vector_width = kernel_cfg.get('vector_width')
+        block = tuple(kernel_cfg['block'])
+        width = kernel_cfg['width']
+
+        for name, val in (('nn', nn), ('warps', warps), ('msplit', msplit)):
+            if not isinstance(val, int) or val <= 0:
+                raise ValueError(f'dmma-astream-msplit params.{name} must be '
+                                 'a positive integer')
+
+        if block != (32 * warps * msplit, 1, 1) or width != 1:
+            raise ValueError('dmma-astream-msplit block/width mismatch')
+
+        n_per_cta = 8 * nn * warps
+        if n_per_cta > self.n:
+            return None
+
+        if vector_width not in {1, 2}:
+            raise ValueError('dmma-astream-msplit vector_width must be 1 or 2')
+
+        if (vector_width == 2
+                and (self.aligne is None or self.aligne % 2
+                     or self.n % (8 * nn))):
+            return None
+
+        setup = self._dense_common(nn, warps, False)
+
+        b_tile_bytes = setup['k_pad'] * n_per_cta * args['dwidth_i']
+        regions = [('b', b_tile_bytes)]
+        offsets, dynm_total_bytes = self._dsmem_alloc(regions, ('tma',))
+        msplit_setup = {
+            'msplit': msplit,
+            'm_tiles_per_group': -(-setup['m_tiles'] // msplit),
+            'b_tile_bytes': b_tile_bytes,
+            'b_smem_kiter_stride': 4 * n_per_cta * args['dwidth_i'],
+            'b_smem_ntile_stride': 8 * args['dwidth_i'],
+            'blockx_total': 32 * warps * msplit,
+            'dynm_total_bytes': dynm_total_bytes,
+        }
+
+        if msplit_setup['dynm_total_bytes'] > dynamic_max:
+            return None
+
+        args |= setup | msplit_setup | offsets
+        meta |= {
+            'grid': (-(-self.n // n_per_cta), 1, 1),
+            'ws_b_tile': (n_per_cta, setup['k_pad']),
+            'dynamic_shared': msplit_setup['dynm_total_bytes'],
+        }
+
+        tpl = f"{kernel_cfg['template']}-v{vector_width}"
+        return tpl, args, meta
 
     @staticmethod
     def _dsmem_alloc(regions, mbars, align=16):
