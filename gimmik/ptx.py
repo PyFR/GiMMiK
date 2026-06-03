@@ -208,12 +208,9 @@ class PTXMatMul(MatMul):
             cfg = self._sparse_args(tpl, params, block, dtype, dsize,
                                     base_args, base_meta)
         elif self.PTX_TEMPLATE_FAMILY[tpl] == 'dense':
-            if tpl == 'dmma-steal-ws':
-                cfg = self._dense_steal_ws_args(kernel_cfg, params, smem_info,
-                                                base_args, base_meta)
-            elif tpl == 'dmma-stride-ws':
-                cfg = self._dense_stride_ws_args(kernel_cfg, params, smem_info,
-                                                 base_args, base_meta)
+            if tpl in {'dmma-steal-ws', 'dmma-stride-ws'}:
+                cfg = self._dense_ws_args(kernel_cfg, params, smem_info,
+                                          base_args, base_meta)
             elif tpl == 'dmma-astream-msplit':
                 cfg = self._dense_astream_msplit_args(kernel_cfg, params,
                                                       smem_info, base_args,
@@ -254,30 +251,38 @@ class PTXMatMul(MatMul):
     def _dense_args(self, kernel_cfg, params, args, meta):
         nn = params['nn']
         warps = params['warps']
-        n_per_cta = 8 * nn * warps
-        if n_per_cta > self.n:
-            return None
-
         vector_width = kernel_cfg['vector_width']
-        if (vector_width == 2
-                and (self.aligne is None or self.aligne % 2
-                     or self.n % (8 * nn))):
+
+        setup = self._dense_common(
+            nn, warps, bool(params.get('block_stealing', False)),
+            vector_width
+        )
+        if setup is None:
             return None
 
-        block_steal = bool(params.get('block_stealing', False))
-        setup = self._dense_common(nn, warps, block_steal)
         tpl = f"{kernel_cfg['template']}-v{vector_width}"
         args |= setup
-        meta['grid'] = (-(-self.n // n_per_cta), 1, 1)
+        meta['grid'] = (-(-self.n // setup['n_per_cta']), 1, 1)
 
         return tpl, args, meta
 
-    def _dense_common(self, nn, warps_per_cta, block_steal):
+    def _dense_common(self, nn, warps_per_cta, block_steal,
+                      vector_width=None):
         a = self.A
         m, k = a.shape
         m_tiles = (m + 7) // 8
         k_tiles = (k + 3) // 4
         k_rem = k % 4
+        n_per_warp = 8 * nn
+        n_per_cta = warps_per_cta * n_per_warp
+
+        if n_per_cta > self.n:
+            return None
+
+        if (vector_width == 2
+                and (self.aligne is None or self.aligne % 2
+                     or self.n % n_per_warp)):
+            return None
 
         # A in DMMA-fragment layout: lane l -> A[mt*8 + l//4][kt*4 + l%4]
         # i.e. an (m_tiles, k_tiles) grid of row-major 8x4 tiles, packed as
@@ -286,9 +291,6 @@ class PTXMatMul(MatMul):
         a_pad[:m, :k] = a
         tiles = a_pad.reshape(m_tiles, 8, k_tiles, 4).swapaxes(1, 2)
         a_u64 = [f'0x{u:016x}' for u in tiles.view(np.uint64).ravel()]
-
-        n_per_warp = 8 * nn
-        n_per_cta  = warps_per_cta * n_per_warp
 
         # Predicate-elision flags
         n_col_aligned = (self.n is not None and self.n % n_per_warp == 0)
@@ -316,102 +318,75 @@ class PTXMatMul(MatMul):
             'block_stealing': block_steal,
         }
 
-    def _dense_steal_ws_args(self, kernel_cfg, params, smem_info, args, meta):
+    def _dense_ws_args(self, kernel_cfg, params, smem_info, args, meta):
         dynamic_max = smem_info[1]
+        tpl = kernel_cfg['template']
         nn = params['nn']
         warp_map = kernel_cfg['warp_map']
+
+        match tpl:
+            case 'dmma-steal-ws':
+                block_steal, service_warps = True, 2
+            case 'dmma-stride-ws':
+                block_steal, service_warps = False, 1
+            case _:
+                raise ValueError(f'Unknown dense warp-specialized template '
+                                 f'{tpl}')
+
         n_comp_warps = warp_map['compute_count']
-        n_per_cta = 8 * nn * n_comp_warps
-        if n_per_cta > self.n:
+        setup = self._dense_common(nn, n_comp_warps, block_steal)
+        if setup is None:
             return None
 
-        setup = self._dense_common(nn, n_comp_warps, True)
-
-        # Warp Specialism Setup
+        n_per_cta = setup['n_per_cta']
         b_tile_bytes = setup['k_pad'] * n_per_cta * 8
         c_tile_bytes = setup['m_pad'] * n_per_cta * 8
         a_bytes = setup['m_tiles'] * setup['k_tiles'] * 32 * 8
-
-        regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
-                   ('c', c_tile_bytes), ('a', a_bytes), ('wid', 16)]
-        mbars = ('tma', 'bready', 'cready', 'cstored',
-                 'steal', 'wid_new', 'wid_used')
-        offsets, dynm_total_bytes = self._dsmem_alloc(regions, mbars)
-        ws_setup = {
-            'n_comp_warps': n_comp_warps,
-            'blockx_total': 32 * (n_comp_warps + 2),
-            'prod_warp': warp_map['producer'],
-            'steal_warp': warp_map['stealer'],
-            'comp_threads': 32 * n_comp_warps,
-            'b_tile_bytes': b_tile_bytes,
-            'c_mtile_smem_stride': 8 * n_per_cta * 8,
-            'c_ntile_smem_stride': 8 * 8,
-            'dynm_total_bytes': dynm_total_bytes,
-        }
-
-        if ws_setup['dynm_total_bytes'] > dynamic_max:
-            return None
-
-        args |= setup | ws_setup | offsets
-        meta |= {
-            'grid': (-(-self.n // n_per_cta), 1, 1),
-            'ws_b_tile': (n_per_cta, setup['k_pad']),
-            'dynamic_shared': ws_setup['dynm_total_bytes'],
-        }
-        if self.beta != 0:
-            meta['ws_out_tile'] = (n_per_cta, setup['m_pad'])
-        return kernel_cfg['template'], args, meta
-
-    def _dense_stride_ws_args(self, kernel_cfg, params, smem_info, args, meta):
-        dynamic_max = smem_info[1]
-        nn = params['nn']
-        stride_iters = params['iters']
-        warp_map = kernel_cfg['warp_map']
-        n_comp_warps = warp_map['compute_count']
-        n_per_cta = 8 * nn * n_comp_warps
-        if n_per_cta > self.n:
-            return None
-
-        setup = self._dense_common(nn, n_comp_warps, False)
-
-        # Warp Specialism Setup
-        b_tile_bytes = setup['k_pad'] * n_per_cta * 8
-        c_tile_bytes = setup['m_pad'] * n_per_cta * 8
-        a_bytes = setup['m_tiles'] * setup['k_tiles'] * 32 * 8
-
         regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
                    ('c', c_tile_bytes), ('a', a_bytes)]
-        mbars = ('tma', 'bready', 'bconsumed', 'cready', 'cstored')
-        offsets, dynm_total_bytes = self._dsmem_alloc(regions, mbars)
-
-        work_blocks = -(-self.n // n_per_cta)
-        grid_stride = -(-work_blocks // stride_iters)
         ws_setup = {
             'n_comp_warps': n_comp_warps,
-            'blockx_total': 32 * (n_comp_warps + 1),
+            'blockx_total': 32 * (n_comp_warps + service_warps),
             'prod_warp': warp_map['producer'],
             'comp_threads': 32 * n_comp_warps,
             'b_tile_bytes': b_tile_bytes,
             'c_mtile_smem_stride': 8 * n_per_cta * 8,
             'c_ntile_smem_stride': 8 * 8,
-            'stride_iters': stride_iters,
-            'grid_stride': grid_stride,
-            'work_blocks': work_blocks,
-            'dynm_total_bytes': dynm_total_bytes,
         }
 
-        if ws_setup['dynm_total_bytes'] > dynamic_max:
+        match tpl:
+            case 'dmma-steal-ws':
+                regions.append(('wid', 16))
+                mbars = ('tma', 'bready', 'cready', 'cstored',
+                         'steal', 'wid_new', 'wid_used')
+                grid = (-(-self.n // n_per_cta), 1, 1)
+                ws_setup['steal_warp'] = warp_map['stealer']
+            case 'dmma-stride-ws':
+                stride_iters = params['iters']
+                work_blocks = -(-self.n // n_per_cta)
+                grid_stride = -(-work_blocks // stride_iters)
+                mbars = ('tma', 'bready', 'bconsumed', 'cready', 'cstored')
+                grid = (grid_stride, 1, 1)
+                ws_setup |= {
+                    'stride_iters': stride_iters,
+                    'grid_stride': grid_stride,
+                    'work_blocks': work_blocks,
+                }
+
+        offsets, dynm_total_bytes = self._dsmem_alloc(regions, mbars)
+        if dynm_total_bytes > dynamic_max:
             return None
 
         args |= setup | ws_setup | offsets
         meta |= {
-            'grid': (grid_stride, 1, 1),
+            'grid': grid,
             'ws_b_tile': (n_per_cta, setup['k_pad']),
-            'dynamic_shared': ws_setup['dynm_total_bytes'],
+            'dynamic_shared': dynm_total_bytes,
         }
         if self.beta != 0:
             meta['ws_out_tile'] = (n_per_cta, setup['m_pad'])
-        return kernel_cfg['template'], args, meta
+
+        return tpl, args, meta
 
     def _dense_astream_msplit_args(self, kernel_cfg, params, smem_info, args,
                                    meta):
@@ -420,34 +395,14 @@ class PTXMatMul(MatMul):
         warps = params.get('warps')
         msplit = params.get('msplit')
         vector_width = kernel_cfg.get('vector_width')
-        block = tuple(kernel_cfg['block'])
-        width = kernel_cfg['width']
-
-        for name, val in (('nn', nn), ('warps', warps), ('msplit', msplit)):
-            if not isinstance(val, int) or val <= 0:
-                raise ValueError(f'dmma-astream-msplit params.{name} must be '
-                                 'a positive integer')
-
-        if block != (32 * warps * msplit, 1, 1) or width != 1:
-            raise ValueError('dmma-astream-msplit block/width mismatch')
-
-        n_per_cta = 8 * nn * warps
-        if n_per_cta > self.n:
+        setup = self._dense_common(nn, warps, False, vector_width)
+        if setup is None:
             return None
 
-        if vector_width not in {1, 2}:
-            raise ValueError('dmma-astream-msplit vector_width must be 1 or 2')
-
-        if (vector_width == 2
-                and (self.aligne is None or self.aligne % 2
-                     or self.n % (8 * nn))):
-            return None
-
-        setup = self._dense_common(nn, warps, False)
+        n_per_cta = setup['n_per_cta']
 
         b_tile_bytes = setup['k_pad'] * n_per_cta * args['dwidth_i']
         regions = [('b', b_tile_bytes)]
-        offsets, dynm_total_bytes = self._dsmem_alloc(regions, ('tma',))
         msplit_setup = {
             'msplit': msplit,
             'm_tiles_per_group': -(-setup['m_tiles'] // msplit),
@@ -455,17 +410,17 @@ class PTXMatMul(MatMul):
             'b_smem_kiter_stride': 4 * n_per_cta * args['dwidth_i'],
             'b_smem_ntile_stride': 8 * args['dwidth_i'],
             'blockx_total': 32 * warps * msplit,
-            'dynm_total_bytes': dynm_total_bytes,
         }
 
-        if msplit_setup['dynm_total_bytes'] > dynamic_max:
+        offsets, dynm_total_bytes = self._dsmem_alloc(regions, ('tma',))
+        if dynm_total_bytes > dynamic_max:
             return None
 
         args |= setup | msplit_setup | offsets
         meta |= {
             'grid': (-(-self.n // n_per_cta), 1, 1),
             'ws_b_tile': (n_per_cta, setup['k_pad']),
-            'dynamic_shared': msplit_setup['dynm_total_bytes'],
+            'dynamic_shared': dynm_total_bytes,
         }
 
         tpl = f"{kernel_cfg['template']}-v{vector_width}"
