@@ -1,6 +1,6 @@
 <%inherit file='base'/>
 
-.global .align 16 .b64 ${kname}_Ag[${32 * m_tiles * k_tiles}] = {
+.global .align 16 .b64 ${kname}_Ag[${a_elems}] = {
     ${', '.join(a_u64)}
 };
 .extern .shared .align 128 .b8 ${kname}_dynm[];
@@ -85,12 +85,12 @@ $L_AFTER_B_TMA:
     @pwarp_exit bra $L_EXIT;
 
 % for nt in range(nn):
-    add.u32 b_col_${nt}, warp_n_base, ${8 * nt};
+    add.u32 b_col_${nt}, warp_n_base, ${tile_n * nt};
     add.u32 b_col_${nt}, b_col_${nt}, r_div4;
     {
         .reg .u32 t;
         shl.b32 t, r_mod4, 1;
-        add.u32 c_col0_${nt}, warp_n_base, ${8 * nt};
+        add.u32 c_col0_${nt}, warp_n_base, ${tile_n * nt};
         add.u32 c_col0_${nt}, c_col0_${nt}, t;
         add.u32 c_col1_${nt}, c_col0_${nt}, 1;
     }
@@ -101,7 +101,7 @@ $L_AFTER_B_TMA:
 %  endif
 % endfor
 
-    // A thread base: &Ag[0] + lane*8
+    // A thread base: &Ag[0] + lane*sizeof(f64)
     {
         .reg .u64 t64, a_glb_base, lane64;
         mov.u64 a_glb_base, ${kname}_Ag;
@@ -140,96 +140,112 @@ $L_AFTER_B_TMA:
         @p_this_msplit bra $L_SKIP_MS_${wm};
     }
     {
-        .reg .${pftype} a_frag;
+        .reg .${pftype} a_frag_<${a_regs}>;
 %   for nt in range(nn):
-        .reg .${pftype} b_frag_${nt};
+        .reg .${pftype} b_frag_${nt}_<${b_regs}>;
 %   endfor
 %   for nt in range(nn):
 %    for mt in owned_mts:
-        .reg .${pftype} c0_${nt}_${mt}, c1_${nt}_${mt};
+        .reg .${pftype} c_${nt}_${mt}_<${c_regs}>;
 %    endfor
 %   endfor
 %   for mt in owned_mts:
-%    if pm_runtime(mt):
-        .reg .pred pm_${mt};
+%    for mg in range(m_groups):
+%     if pm_runtime(mt, mg):
+        .reg .pred pm_${mt}_${mg};
         {
             .reg .u32 crow;
-            add.u32 crow, r_div4, ${8 * mt};
-            setp.lt.u32 pm_${mt}, crow, ${m};
+            add.u32 crow, r_div4, ${tile_m * mt + 8 * mg};
+            setp.lt.u32 pm_${mt}_${mg}, crow, ${m};
         }
-%    endif
+%     endif
+%    endfor
 %   endfor
 
 %   for nt in range(nn):
 %    for mt in owned_mts:
 %     if beta_zero:
-        mov.${pftype} c0_${nt}_${mt}, ${fzero};
-        mov.${pftype} c1_${nt}_${mt}, ${fzero};
+%      for ci in range(c_regs):
+        mov.${pftype} c_${nt}_${mt}_${ci}, ${fzero};
+%      endfor
 %     else:
+%      for mg in range(m_groups):
 <%
-    pm = f'pm_{mt}' if pm_runtime(mt) else None
-    needs_zero_init = pm is not None
+    pm = f'pm_{mt}_{mg}' if pm_runtime(mt, mg) else None
+    c0 = f'c_{nt}_{mt}_{2*mg}'
+    c1 = f'c_{nt}_{mt}_{2*mg + 1}'
+    cpair = f'{c0}, {c1}'
 %>
         {
             .reg .u64 caddr;
-            add.u64 caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
-%      if needs_zero_init:
-            mov.${pftype} c0_${nt}_${mt}, ${fzero};
-            mov.${pftype} c1_${nt}_${mt}, ${fzero};
-%      endif
-            ${pred_emit(f'ld.weak.global.cg.v2.{pftype} {{c0_{nt}_{mt}, c1_{nt}_{mt}}}, [caddr];', pm, pred_reg=f'p01_{wm}_{nt}_{mt}', indent=' ' * 12)}
+            add.u64 caddr, c_thr_base, ${mt * c_mtile_stride + mg * c_mgroup_stride + nt * c_ntile_stride};
+%       if pm is not None:
+            mov.${pftype} ${c0}, ${fzero};
+            mov.${pftype} ${c1}, ${fzero};
+%       endif
+            ${pred_emit(f'ld.weak.global.cg.v2.{pftype} {{{cpair}}}, [caddr];', pm, pred_reg=f'p01_{wm}_{nt}_{mt}_{mg}', indent=' ' * 12)}
         }
+%      endfor
 %     endif
 %    endfor
 %   endfor
 
 %   for ki in range(k_tiles):
 %    for nt in range(nn):
+%     for kg in range(k_groups):
 <%
     pvb = f'pvalid_bcol_{nt}' if not n_col_aligned else None
-    k_tail = (k_rem != 0 and loop.parent.last)
+    k_tail = (k_rem != 0 and loop.parent.parent.last)
     needs_zero = pvb is not None or k_tail
-    pbrow = 'pbrow' if k_tail else None
+    pbrow = f'pbrow_{kg}' if k_tail else None
 %>
         {
             .reg .u32 baddr;
-            add.u32 baddr, b_thr_base, ${ki * b_smem_kiter_stride + nt * b_smem_ntile_stride};
-%     if needs_zero:
-            mov.${pftype} b_frag_${nt}, ${fzero};
-%     endif
-%     if k_tail:
-            .reg .pred pbrow;
+            add.u32 baddr, b_thr_base, ${ki * b_smem_kiter_stride + kg * b_smem_kgroup_stride + nt * b_smem_ntile_stride};
+%      if needs_zero:
+            mov.${pftype} b_frag_${nt}_${kg}, ${fzero};
+%      endif
+%      if k_tail:
+            .reg .pred ${pbrow};
             {
                 .reg .u32 brow;
-                add.u32 brow, r_mod4, ${4 * ki};
-                setp.lt.u32 pbrow, brow, ${k};
+                add.u32 brow, r_mod4, ${tile_k * ki + 4 * kg};
+                setp.lt.u32 ${pbrow}, brow, ${k};
             }
-%     endif
-            ${pred_emit(f'ld.shared.{pftype} b_frag_{nt}, [baddr];', pbrow, pvb, pred_reg=f'pb_{wm}_{ki}_{nt}', indent=' ' * 12)}
+%      endif
+            ${pred_emit(f'ld.shared.{pftype} b_frag_{nt}_{kg}, [baddr];', pbrow, pvb, pred_reg=f'pb_{wm}_{ki}_{nt}_{kg}', indent=' ' * 12)}
         }
+%     endfor
 %    endfor
 %    for mt in owned_mts:
-        ld.weak.global.${pftype} a_frag, [ag_thr_base + ${(mt * k_tiles + ki) * frag_stride_bytes}];
+%     for ai in range(a_regs):
+        ld.weak.global.${pftype} a_frag_${ai}, [ag_thr_base + ${(mt * k_tiles + ki) * frag_stride_bytes + 32 * ai * dwidth_i}];
+%     endfor
 %     for nt in range(nn):
-        mma.sync.aligned.m8n8k4.row.col.${pftype}.${pftype}.${pftype}.${pftype}
-            {c0_${nt}_${mt}, c1_${nt}_${mt}},
-            {a_frag},
-            {b_frag_${nt}},
-            {c0_${nt}_${mt}, c1_${nt}_${mt}};
+        mma.sync.aligned.${ptx_mma_shape}.row.col.${pftype}.${pftype}.${pftype}.${pftype}
+            ${reg_list(f'c_{nt}_{mt}', c_regs)},
+            ${reg_list('a_frag', a_regs)},
+            ${reg_list(f'b_frag_{nt}', b_regs)},
+            ${reg_list(f'c_{nt}_{mt}', c_regs)};
 %     endfor
 %    endfor
 %   endfor
 
 %   for mt in owned_mts:
 %    for nt in range(nn):
+%     for mg in range(m_groups):
 <%
-    pm = f'pm_{mt}' if pm_runtime(mt) else None
+    pm = f'pm_{mt}_{mg}' if pm_runtime(mt, mg) else None
+    c0 = f'c_{nt}_{mt}_{2*mg}'
+    c1 = f'c_{nt}_{mt}_{2*mg + 1}'
+    cpair = f'{c0}, {c1}'
 %>
         {
             .reg .u64 caddr;
-            add.u64 caddr, c_thr_base, ${mt * c_mtile_stride + nt * c_ntile_stride};
-            ${pred_emit(f'st.weak.global.v2.{pftype} [caddr], {{c0_{nt}_{mt}, c1_{nt}_{mt}}};', pm, pred_reg=f'p01s_{wm}_{nt}_{mt}', indent=' ' * 12)}
+            add.u64 caddr, c_thr_base, ${mt * c_mtile_stride + mg * c_mgroup_stride + nt * c_ntile_stride};
+            ${pred_emit(f'st.weak.global.v2.{pftype} [caddr], {{{cpair}}};', pm, pred_reg=f'p01s_{wm}_{nt}_{mt}_{mg}', indent=' ' * 12)}
         }
+%     endfor
 %    endfor
 %   endfor
     }

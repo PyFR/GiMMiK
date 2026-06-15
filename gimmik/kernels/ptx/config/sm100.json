@@ -20,7 +20,8 @@
       "params": {
         "csz": 20
       },
-      "descriptor": "cstream-ksplit/k2-c20-x32"
+      "descriptor": "cstream-ksplit/k2-c20-x32",
+      "family": "sparse"
     },
     {
       "template": "bstream-msplit",
@@ -33,7 +34,8 @@
       "params": {
         "bsz": 32
       },
-      "descriptor": "bstream-msplit/m4-b32-x32"
+      "descriptor": "bstream-msplit/m4-b32-x32",
+      "family": "sparse"
     },
     {
       "template": "bstream",
@@ -43,7 +45,8 @@
         1
       ],
       "width": 1,
-      "descriptor": "bstream/x64"
+      "descriptor": "bstream/x64",
+      "family": "sparse"
     },
     {
       "template": "cstream-ksplit",
@@ -56,7 +59,8 @@
       "params": {
         "csz": 20
       },
-      "descriptor": "cstream-ksplit/k4-c20-x32"
+      "descriptor": "cstream-ksplit/k4-c20-x32",
+      "family": "sparse"
     },
     {
       "template": "bstream-msplit",
@@ -69,7 +73,8 @@
       "params": {
         "bsz": 32
       },
-      "descriptor": "bstream-msplit/m8-b32-x32"
+      "descriptor": "bstream-msplit/m8-b32-x32",
+      "family": "sparse"
     },
     {
       "template": "bstream-msplit",
@@ -82,7 +87,8 @@
       "params": {
         "bsz": 32
       },
-      "descriptor": "bstream-msplit/m1-b32-x32"
+      "descriptor": "bstream-msplit/m1-b32-x32",
+      "family": "sparse"
     },
     {
       "template": "bstream-msplit",
@@ -95,7 +101,8 @@
       "params": {
         "bsz": 32
       },
-      "descriptor": "bstream-msplit/m2-b32-x64"
+      "descriptor": "bstream-msplit/m2-b32-x64",
+      "family": "sparse"
     },
     {
       "template": "cstream",
@@ -105,7 +112,8 @@
         1
       ],
       "width": 1,
-      "descriptor": "cstream/x128"
+      "descriptor": "cstream/x128",
+      "family": "sparse"
     },
     {
       "template": "dmma-steal-ws",
@@ -128,7 +136,13 @@
         "field": "n",
         "is_not": null
       },
-      "descriptor": "dmma-steal-ws/nn2-w4"
+      "descriptor": "dmma-steal-ws/nn2-w4",
+      "family": "dense-ws",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
     },
     {
       "template": "dmma-astream-msplit",
@@ -160,7 +174,13 @@
           }
         ]
       },
-      "descriptor": "dmma-astream-msplit/v2/nn2-w2-m2"
+      "descriptor": "dmma-astream-msplit/v2/nn2-w2-m2",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
     },
     {
       "template": "dmma-steal-ws",
@@ -183,7 +203,13 @@
         "field": "n",
         "is_not": null
       },
-      "descriptor": "dmma-steal-ws/nn1-w4"
+      "descriptor": "dmma-steal-ws/nn1-w4",
+      "family": "dense-ws",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
     },
     {
       "template": "dmma-astream",
@@ -214,7 +240,13 @@
           }
         ]
       },
-      "descriptor": "dmma-astream/v2/nn4-w1"
+      "descriptor": "dmma-astream/v2/nn4-w1",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
     },
     {
       "template": "dmma-astream-msplit",
@@ -246,7 +278,13 @@
           }
         ]
       },
-      "descriptor": "dmma-astream-msplit/v2/nn4-w1-m2"
+      "descriptor": "dmma-astream-msplit/v2/nn4-w1-m2",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
     },
     {
       "template": "dmma-steal-ws",
@@ -269,7 +307,13 @@
         "field": "n",
         "is_not": null
       },
-      "descriptor": "dmma-steal-ws/nn4-w4"
+      "descriptor": "dmma-steal-ws/nn4-w4",
+      "family": "dense-ws",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
     },
     {
       "template": "dmma-astream-msplit",
@@ -301,7 +345,13 @@
           }
         ]
       },
-      "descriptor": "dmma-astream-msplit/v2/nn4-w1-m3"
+      "descriptor": "dmma-astream-msplit/v2/nn4-w1-m3",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
     },
     {
       "template": "dmma-astream",
@@ -332,7 +382,13 @@
           }
         ]
       },
-      "descriptor": "dmma-astream/v2/nn2-w8"
+      "descriptor": "dmma-astream/v2/nn2-w8",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
     }
   ]
 }

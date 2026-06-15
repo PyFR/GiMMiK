@@ -1,6 +1,41 @@
 {
   "schema": 1,
-  "cc": [0, 0],
-  "ptx": [0, 0],
-  "kernels": []
+  "cc": [7, 0],
+  "ptx": [7, 0],
+  "kernels": [
+    {
+      "template": "cstream",
+      "family": "sparse",
+      "block": [128, 1, 1],
+      "width": 1,
+      "descriptor": "cstream/x128"
+    },
+    {
+      "template": "bstream",
+      "family": "sparse",
+      "block": [128, 1, 1],
+      "width": 1,
+      "descriptor": "bstream/x128"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [32, 4, 1],
+      "width": 1,
+      "params": {
+        "bsz": 24
+      },
+      "descriptor": "bstream-msplit/m4-b24-x32"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [32, 2, 1],
+      "width": 1,
+      "params": {
+        "csz": 24
+      },
+      "descriptor": "cstream-ksplit/k2-c24-x32"
+    }
+  ]
 }

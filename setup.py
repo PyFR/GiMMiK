@@ -7,8 +7,8 @@ import sys
 
 
 # Python version
-if sys.version_info[:2] < (3, 9):
-    print('GiMMiK requires Python 3.9 or newer')
+if sys.version_info[:2] < (3, 10):
+    print('GiMMiK requires Python 3.10 or newer')
     sys.exit(-1)
 
 # GiMMiK version
@@ -34,7 +34,6 @@ install_requires = [
 # Info
 classifiers = [
     'License :: OSI Approved :: BSD License',
-    'Programming Language :: Python :: 3.9',
     'Programming Language :: Python :: 3.10',
     'Programming Language :: Python :: 3.11',
     'Topic :: Scientific/Engineering'
@@ -56,6 +55,7 @@ keywords = ['Matrix Multiplication', 'ISPC', 'GPU', 'CUDA', 'HIP', 'Metal',
 
 setup(name='gimmik',
       version=version,
+      python_requires='>=3.10',
 
       # Packages
       packages=['gimmik'],

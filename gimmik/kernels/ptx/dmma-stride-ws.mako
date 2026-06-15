@@ -10,11 +10,11 @@
         mov.u64 a_glb, ${kname}_Ag;
         cvta.to.global.u64 a_glb, a_glb;
         @p_warp_lead cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes
-            [a_smem], [a_glb], ${8 * 32 * m_tiles * k_tiles}, [tma_mbar];
+            [a_smem], [a_glb], ${a_elems * dwidth_i}, [tma_mbar];
         @p_warp_lead cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes
             [b1_smem], [bdesc_addr, {n_start0, 0}], [tma_mbar];
         @p_warp_lead mbarrier.expect_tx.relaxed.cta.shared::cta.b64
-            [tma_mbar], ${b_tile_bytes + 8 * 32 * m_tiles * k_tiles};
+            [tma_mbar], ${b_tile_bytes + a_elems * dwidth_i};
         bar.warp.sync 0xffffffff;
         .reg .b64 state;
         .reg .pred p1;
@@ -57,7 +57,7 @@ $L_WAIT_BRDY:
         .reg .b32 b_thr_a_${nt};
         {
             .reg .b32 bcol_g, t_off;
-            add.u32 bcol_g, base_bcol, ${8 * nt};
+            add.u32 bcol_g, base_bcol, ${tile_n * nt};
             shl.b32 t_off, bcol_g, 3;
             add.u32 b_thr_a_${nt}, b_sm_a, t_off;
         }
@@ -83,49 +83,51 @@ $L_WAIT_BRDY:
         // Zero accumulators
 % for mt in range(m_tiles):
 %  for nt in range(nn):
-        .reg .${pftype} d_x_${mt}_${nt}, d_y_${mt}_${nt};
-        mov.${pftype} d_x_${mt}_${nt}, ${fzero};
-        mov.${pftype} d_y_${mt}_${nt}, ${fzero};
+        .reg .${pftype} d_${mt}_${nt}_<${c_regs}>;
+%   for ci in range(c_regs):
+        mov.${pftype} d_${mt}_${nt}_${ci}, ${fzero};
+%   endfor
 %  endfor
 % endfor
 
-        .reg .${pftype} a_f;
-% for mt in range(m_tiles):
-%  for kt in range(k_tiles):
+        .reg .${pftype} a_frag_<${a_regs}>;
+% for nt in range(nn):
+        .reg .${pftype} b_frag_${nt}_<${b_regs}>;
+% endfor
+% for kt in range(k_tiles):
+%  for nt in range(nn):
+%   for kg in range(k_groups):
 <%
-    k_tail = (k_rem != 0 and loop.last)
+    k_tail = (k_rem != 0 and loop.parent.parent.last)
+    pbrow = f'pbrow_{nt}_{kg}' if k_tail else None
 %>
         {
-            .reg .b32 a_a;
-            add.u32 a_a, a_thr_a, ${(32 * kt + 32 * mt * k_tiles) * dwidth_i};
-            ld.shared.${pftype} a_f, [a_a];
-%   if k_tail:
-            .reg .pred pbrow_${mt}_${kt};
-            {
-                .reg .b32 brow;
-                add.u32 brow, base_brow, ${4 * kt};
-                setp.lt.u32 pbrow_${mt}_${kt}, brow, ${k};
-            }
-%   endif
-%   for nt in range(nn):
-            {
-                .reg .b32 b_a, b_row;
-                .reg .${pftype} b_f;
-                add.u32 b_row, base_brow, ${4 * kt};
-                mul.lo.u32 b_row, b_row, ${n_per_cta * dwidth_i};
-                add.u32 b_a, b_thr_a_${nt}, b_row;
+            .reg .b32 b_a, b_row, b_off;
+            add.u32 b_row, base_brow, ${tile_k * kt + 4 * kg};
+            mul.lo.u32 b_off, b_row, ${n_per_cta * dwidth_i};
+            add.u32 b_a, b_thr_a_${nt}, b_off;
 %    if k_tail:
-                mov.${pftype} b_f, ${fzero};
-                @pbrow_${mt}_${kt} ld.shared.${pftype} b_f, [b_a];
+            .reg .pred ${pbrow};
+            setp.lt.u32 ${pbrow}, b_row, ${k};
+            mov.${pftype} b_frag_${nt}_${kg}, ${fzero};
+            @${pbrow} ld.shared.${pftype} b_frag_${nt}_${kg}, [b_a];
 %    else:
-                ld.shared.${pftype} b_f, [b_a];
+            ld.shared.${pftype} b_frag_${nt}_${kg}, [b_a];
 %    endif
-                mma.sync.aligned.m8n8k4.row.col.${pftype}.${pftype}.${pftype}.${pftype}
-                    {d_x_${mt}_${nt}, d_y_${mt}_${nt}}, {a_f}, {b_f},
-                    {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
-            }
-%   endfor
         }
+%   endfor
+%  endfor
+%  for mt in range(m_tiles):
+%   for ai in range(a_regs):
+        ld.shared.${pftype} a_frag_${ai}, [a_thr_a + ${(mt * k_tiles + kt) * frag_stride_bytes + 32 * ai * dwidth_i}];
+%   endfor
+%   for nt in range(nn):
+        mma.sync.aligned.${ptx_mma_shape}.row.col.${pftype}.${pftype}.${pftype}.${pftype}
+            ${reg_list(f'd_{mt}_{nt}', c_regs)},
+            ${reg_list('a_frag', a_regs)},
+            ${reg_list(f'b_frag_{nt}', b_regs)},
+            ${reg_list(f'd_{mt}_{nt}', c_regs)};
+%   endfor
 %  endfor
 % endfor
 
@@ -140,31 +142,33 @@ $L_WAIT_BRDY:
             add.u64 c_thr_glob_base, c_glob_addr, thr_byte_off;
         }
 %  for mt in range(m_tiles):
+%   for mg in range(m_groups):
 <%
-    row_tail = (m_pad > m) and ((mt + 1) * 8 > m)
+    row_tail = pm_runtime(mt, mg)
 %>
-%   if row_tail:
-        .reg .pred p_row_${mt};
+%    if row_tail:
+        .reg .pred p_row_${mt}_${mg};
         {
             .reg .b32 crow;
-            add.u32 crow, base_crow, ${8 * mt};
-            setp.lt.u32 p_row_${mt}, crow, ${m};
+            add.u32 crow, base_crow, ${tile_m * mt + 8 * mg};
+            setp.lt.u32 p_row_${mt}_${mg}, crow, ${m};
         }
-%   endif
-%   for nt in range(nn):
+%    endif
+%    for nt in range(nn):
         {
             .reg .pred p_st;
             .reg .u32 g_ccol;
-            add.u32 g_ccol, base_ccol, ${8 * nt};
+            add.u32 g_ccol, base_ccol, ${tile_n * nt};
             add.u32 g_ccol, g_ccol, n_start_curr;
             setp.lt.u32 p_st, g_ccol, ${n};
-%    if row_tail:
-            and.pred p_st, p_st, p_row_${mt};
-%    endif
+%     if row_tail:
+            and.pred p_st, p_st, p_row_${mt}_${mg};
+%     endif
             .reg .u64 _c_addr;
-            add.u64 _c_addr, c_thr_glob_base, ${(8 * mt * ldc + 8 * nt) * dwidth_i};
-            @p_st st.weak.global.v2.${pftype} [_c_addr], {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
+            add.u64 _c_addr, c_thr_glob_base, ${((tile_m * mt + 8 * mg) * ldc + tile_n * nt) * dwidth_i};
+            @p_st st.weak.global.v2.${pftype} [_c_addr], {d_${mt}_${nt}_${2*mg}, d_${mt}_${nt}_${2*mg + 1}};
         }
+%    endfor
 %   endfor
 %  endfor
 % else:
@@ -176,15 +180,17 @@ $L_WAIT_CSTORE:
             @!p1 bra.uni $L_WAIT_CSTORE;
         }
 
-        // Vector-store {d_x, d_y} pairs to csmem.  M-tail / N-tail OOB rows
+        // Vector-store accumulator pairs to csmem. M-tail / N-tail OOB rows
         // are dropped by the C tensor map.
 %  for mt in range(m_tiles):
-%   for nt in range(nn):
+%   for mg in range(m_groups):
+%    for nt in range(nn):
         {
             .reg .b32 csaddr;
-            add.u32 csaddr, c_thr_smem, ${mt * c_mtile_smem_stride + nt * c_ntile_smem_stride};
-            st.shared.v2.${pftype} [csaddr], {d_x_${mt}_${nt}, d_y_${mt}_${nt}};
+            add.u32 csaddr, c_thr_smem, ${mt * c_mtile_smem_stride + mg * c_mgroup_smem_stride + nt * c_ntile_smem_stride};
+            st.shared.v2.${pftype} [csaddr], {d_${mt}_${nt}_${2*mg}, d_${mt}_${nt}_${2*mg + 1}};
         }
+%    endfor
 %   endfor
 %  endfor
 % endif
@@ -277,7 +283,7 @@ $L_SKIP_NEXT_B_READY:
 $L_AFTER_DATA:
 </%def>
 
-.global .align 16 .b64 ${kname}_Ag[${32 * m_tiles * k_tiles}] = {
+.global .align 16 .b64 ${kname}_Ag[${a_elems}] = {
     ${', '.join(a_u64)}
 };
 .extern .shared .align 128 .b8 ${kname}_dynm[];

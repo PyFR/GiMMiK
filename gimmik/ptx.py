@@ -15,22 +15,13 @@ class PTXMatMul(MatMul):
         'dynamic_shared': 0
     }
 
-    # Map Supported CC -> Minimum PTX version
+    # Map explicitly supported CC to minimum PTX version
     PTX_SM = {(8, 0): (7, 0), (9, 0): (8, 6), (10, 0): (8, 7), (10, 3): (8, 7),
               (12, 0): (8, 7), (12, 1): (8, 7)}
 
-    PTX_TEMPLATE_FAMILY = {
-        'cstream': 'sparse',
-        'bstream': 'sparse',
-        'bstream-msplit': 'sparse',
-        'cstream-ksplit': 'sparse',
-        'cstream-w2': 'sparse',
-        'dmma-astream': 'dense',
-        'dmma-astream-msplit': 'dense',
-        'dmma-asmem': 'dense',
-        'dmma-steal-ws': 'dense',
-        'dmma-stride-ws': 'dense',
-    }
+    DEFAULT_CFG = 'kernels/ptx/config/default.json'
+    FZERO = {'float': '0f00000000', 'double': '0d0000000000000000'}
+    PFTYPE = {'float': 'f32', 'double': 'f64'}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -38,10 +29,11 @@ class PTXMatMul(MatMul):
 
     @classmethod
     def is_sparse_suitable(cls, arr, cc):
+        cc = cc or (0, 0)
         nnz = np.count_nonzero(arr)
         nuq = len(np.unique(np.abs(arr)))
         density = nnz / arr.size
-        return ((nuq <= 28) or (density <= 0.15)) and cc in cls.PTX_SM
+        return ((nuq <= 28) or (density <= 0.15)) and cc >= (7, 0)
 
     @classmethod
     def is_dense_suitable(cls, arr, cc):
@@ -58,129 +50,47 @@ class PTXMatMul(MatMul):
         cc = compute_capability or (0, 0)
         smem_info = smem_info or (48*1024, 48*1024)
         config = self._cc_config(cc)
+        if cc in self.PTX_SM:
+            target_cc = cc
+            ptx = self.PTX_SM[cc]
+        else:
+            target_cc = tuple(config['cc'])
+            ptx = tuple(config['ptx'])
 
-        for kernel_cfg in config['kernels']:
-            if not self._usable_config(kernel_cfg, dtype, cc, smem_info):
-                continue
+        cfgs = config['kernels']
+        cfg = [k for k in cfgs if self._usable_config(k, dtype, cc, smem_info)]
 
-            prepared = self._get_render_args(
-                kernel_cfg, dtype, dsize, cc, smem_info, tuple(config['ptx'])
-            )
-            if prepared is not None:
+        for k in cfg:
+            if prepared := self._get_render_args(
+                k, dtype, dsize, target_cc, smem_info, ptx
+            ):
                 yield prepared
 
-    def render_config(self, kernel_cfg, dtype, dsize, *, kname='gimmik_mm',
-                      compute_capability=None, smem_info=None, config=None):
-        cc = compute_capability or (0, 0)
+    def render_config(self, kernel_cfg, dtype, dsize, cc, ptx, *,
+                      kname='gimmik_mm', smem_info=None):
         smem_info = smem_info or (48*1024, 48*1024)
-        config = config or self._cc_config(cc)
 
         if not self._usable_config(kernel_cfg, dtype, cc, smem_info):
             return None
 
         prepared = self._get_render_args(
-            kernel_cfg, dtype, dsize, cc, smem_info, tuple(config['ptx'])
+            kernel_cfg, dtype, dsize, cc, smem_info, ptx
         )
         if prepared is None:
             return None
-        tplname, exargs, exmeta = prepared
+
+        tpl, exargs, exmeta = prepared
 
         args = self._base_template_args(dtype, kname) | exargs
         meta = self.basemeta | exmeta
-        meta['tplname'] = tplname
+        meta['tplname'] = tpl
         self._process_meta(meta)
-        src = self._render_kernel(dtype, tplname, args)
+        src = self._render_kernel(dtype, tpl, args)
         return src, args, meta
 
-    def _cc_config(self, cc):
-        cc = cc or (0, 0)
-        if cc not in self._config_cache:
-            cfgname = f'sm{cc[0]}{cc[1]}.json'
-            paths = [f'kernels/ptx/config/{cfgname}',
-                    'kernels/ptx/config/default.json']
-
-            cfg = None
-            for path in paths:
-                try:
-                    cfgdir = pkgutil.get_data('gimmik', path)
-                    cfg = json.loads(cfgdir.decode('utf-8'))
-                    break
-                except FileNotFoundError:
-                    continue
-                except json.JSONDecodeError as e:
-                    raise ValueError(f'{path}: invalid JSON: {exc}') from e
-
-            if cfg is None:
-                raise ValueError('PTX default kernel config is missing')
-            self._config_cache[cc] = cfg
-        return self._config_cache[cc]
-
-    def _matmul_stats(self, dtype, cc, smem_info):
-        nnz = int(np.count_nonzero(self.A))
-        return {
-            'dtype': dtype,
-            'm': self.m,
-            'k': self.k,
-            'n': self.n,
-            'beta': self.beta,
-            'beta_zero': self.beta == 0,
-            'aligne': self.aligne,
-            'nnz': nnz,
-            'density': nnz / self.A.size,
-            'unique_abs': int(len(np.unique(np.abs(self.A)))),
-            'k_used': len(self.bix),
-            'cc': list(cc),
-            'smem_static': smem_info[0],
-            'smem_dynamic': smem_info[1],
-        }
-
-    def _eval_condition(self, condition, stats):
-        if 'all' in condition:
-            return all(self._eval_condition(c, stats) for c in condition['all'])
-        if 'any' in condition:
-            return any(self._eval_condition(c, stats) for c in condition['any'])
-        if 'not' in condition:
-            return not self._eval_condition(condition['not'], stats)
-
-        value = stats[condition['field']]
-        op = next(k for k in condition if k != 'field')
-        expected = condition[op]
-
-        return {
-            'eq': lambda: value == expected,
-            'ne': lambda: value != expected,
-            'lt': lambda: value is not None and value < expected,
-            'lte': lambda: value is not None and value <= expected,
-            'gt': lambda: value is not None and value > expected,
-            'gte': lambda: value is not None and value >= expected,
-            'in': lambda: value in expected,
-            'is_null': lambda: value is None,
-            'is_not': lambda: value is not None,
-            'divisible_by': lambda: value is not None and value % expected == 0,
-            'is_null_or_divisible_by': lambda: (value is None
-                                                or value % expected == 0),
-        }[op]()
-
-    def _usable_config(self, kernel_cfg, dtype, cc, smem_info):
+    def _get_render_args(self, kernel_cfg, dtype, dsize, cc, smem_info, ptx):
         tpl = kernel_cfg['template']
-        family = self.PTX_TEMPLATE_FAMILY[tpl]
-
-        if family == 'sparse' and not self.is_sparse_suitable(self.A, cc):
-            return False
-        elif (family == 'dense'
-              and (self.n is None or not self.is_dense_suitable(self.A, cc))):
-            return False
-
-        condition = kernel_cfg.get('conditions')
-        if condition is None:
-            return True
-        else:
-            stats = self._matmul_stats(dtype, cc, smem_info)
-            return self._eval_condition(condition, stats)
-
-    def _get_render_args(self, kernel_cfg, dtype, dsize, cc, smem_info,
-                         ptx):
-        tpl = kernel_cfg['template']
+        family = kernel_cfg['family']
         block = tuple(kernel_cfg['block'])
         width = kernel_cfg['width']
         params = kernel_cfg.get('params', {})
@@ -189,14 +99,14 @@ class PTXMatMul(MatMul):
             'cc': cc,
             'smem_info': smem_info,
             'pred_emit': self._pred_emit,
-            'pftype': 'f32' if dtype == 'float' else 'f64',
+            'pftype': self.PFTYPE[dtype],
             'dwidth_i': dsize,
-            'fzero': ('0f00000000' if dtype == 'float'
-                      else '0d0000000000000000'),
+            'fzero': self.FZERO[dtype],
             'beta_zero': self.beta == 0,
-            'mbar_maxwait': '0x989680',
+            'mbar_maxwait': hex(10000000),
             'use_cpasync': cc >= (8, 0),
             'width': width,
+            'reg_list': self._reg_list,
         }
         base_meta = {
             'block': block,
@@ -204,27 +114,22 @@ class PTXMatMul(MatMul):
             'desc': kernel_cfg['descriptor'],
         }
 
-        if self.PTX_TEMPLATE_FAMILY[tpl] == 'sparse':
-            cfg = self._sparse_args(tpl, params, block, dtype, dsize,
-                                    base_args, base_meta)
-        elif self.PTX_TEMPLATE_FAMILY[tpl] == 'dense':
-            if tpl in {'dmma-steal-ws', 'dmma-stride-ws'}:
-                cfg = self._dense_ws_args(kernel_cfg, params, smem_info,
+        match family:
+            case 'sparse':
+                cfg = self._sparse_args(tpl, params, block, dtype, dsize,
+                                        base_args, base_meta)
+            case 'dense':
+                cfg = self._dense_args(kernel_cfg, params, cc, smem_info,
+                                       base_args, base_meta)
+            case 'dense-ws':
+                cfg = self._dense_ws_args(kernel_cfg, params, cc, smem_info,
                                           base_args, base_meta)
-            elif tpl == 'dmma-astream-msplit':
-                cfg = self._dense_astream_msplit_args(kernel_cfg, params,
-                                                      smem_info, base_args,
-                                                      base_meta)
-            else:
-                cfg = self._dense_args(kernel_cfg, params, base_args,
-                                       base_meta)
-        else:
-            raise ValueError(f'Unknown PTX template family for {tpl}')
+            case _:
+                raise ValueError(f'Unknown PTX template family for {tpl}')
 
         return cfg
 
-    def _sparse_args(self, tpl, params, block, dtype, dsize, args,
-                     meta):
+    def _sparse_args(self, tpl, params, block, dtype, dsize, args, meta):
         blockx = block[0]
         args |= {'has_zero_rows': bool(self.has_zero_rows),
                  'row_nz': [[(kx, self.A[j, kx]) for kx in range(self.k)
@@ -248,32 +153,69 @@ class PTXMatMul(MatMul):
                 args['blockx'] = blockx
         return tpl, args, meta
 
-    def _dense_args(self, kernel_cfg, params, args, meta):
+    def _dense_args(self, kernel_cfg, params, cc, smem_info, args, meta):
+        base_tpl = kernel_cfg['template']
         nn = params['nn']
         warps = params['warps']
+        tile = kernel_cfg['tile']
         vector_width = kernel_cfg['vector_width']
 
-        setup = self._dense_common(
-            nn, warps, bool(params.get('block_stealing', False)),
-            vector_width
-        )
+        setup = self._dense_common(nn, warps, tile, cc, vector_width)
         if setup is None:
             return None
 
-        tpl = f"{kernel_cfg['template']}-v{vector_width}"
+        tpl = f'{base_tpl}-v{vector_width}'
         args |= setup
+        if base_tpl == 'dmma-asmem':
+            args |= {
+                'a_copy_threads': 32 * warps,
+                'block_stealing': bool(params.get('block_stealing', False)),
+            }
         meta['grid'] = (-(-self.n // setup['n_per_cta']), 1, 1)
+
+        if (msplit := params.get('msplit')) is None:
+            return tpl, args, meta
+
+        n_per_cta = setup['n_per_cta']
+        k_pad = setup['k_tiles'] * setup['tile_k']
+        b_tile_bytes = k_pad * n_per_cta * args['dwidth_i']
+
+        offsets, dynm_total_bytes = self._dsmem_alloc(
+            [('b', b_tile_bytes)], ('tma',)
+        )
+        if dynm_total_bytes > smem_info[1]:
+            return None
+
+        args |= {
+            'msplit': msplit,
+            'b_tile_bytes': b_tile_bytes,
+            'b_smem_kiter_stride': (setup['tile_k'] * n_per_cta
+                                    * args['dwidth_i']),
+            'b_smem_kgroup_stride': 4 * n_per_cta * args['dwidth_i'],
+            'b_smem_ntile_stride': setup['tile_n'] * args['dwidth_i'],
+            'blockx_total': 32 * warps * msplit,
+        } | offsets
+        meta |= {
+            'ws_b_tile': (n_per_cta, k_pad),
+            'dynamic_shared': dynm_total_bytes,
+        }
 
         return tpl, args, meta
 
-    def _dense_common(self, nn, warps_per_cta, block_steal,
-                      vector_width=None):
+    def _dense_common(self, nn, warps_per_cta, tile, cc, vector_width=None):
+        tile_m, tile_n, tile_k = tile['m'], tile['n'], tile['k']
+        ptx_shape = f'm{tile_m}n{tile_n}k{tile_k}'
+
+        m_groups, k_groups = tile_m // 8, tile_k // 4
+        a_regs = m_groups * k_groups
+        b_regs = k_groups
+        c_regs = 2 * m_groups
+
         a = self.A
         m, k = a.shape
-        m_tiles = (m + 7) // 8
-        k_tiles = (k + 3) // 4
-        k_rem = k % 4
-        n_per_warp = 8 * nn
+        m_tiles, k_tiles = -(-m // tile_m), -(-k // tile_k)
+        k_rem = k % tile_k
+        n_per_warp = tile_n * nn
         n_per_cta = warps_per_cta * n_per_warp
 
         if n_per_cta > self.n:
@@ -284,64 +226,78 @@ class PTXMatMul(MatMul):
                      or self.n % n_per_warp)):
             return None
 
-        # A in DMMA-fragment layout: lane l -> A[mt*8 + l//4][kt*4 + l%4]
-        # i.e. an (m_tiles, k_tiles) grid of row-major 8x4 tiles, packed as
-        # uint64
-        a_pad = np.zeros((m_tiles*8, k_tiles*4))
+        # A in DMMA-fragment layout, packed in PTX A-operand register order.
+        # This will handle 8x8x4 as well as additional sm90 sizes.
+        a_pad = np.zeros((m_tiles*tile_m, k_tiles*tile_k), dtype=a.dtype)
         a_pad[:m, :k] = a
-        tiles = a_pad.reshape(m_tiles, 8, k_tiles, 4).swapaxes(1, 2)
-        a_u64 = [f'0x{u:016x}' for u in tiles.view(np.uint64).ravel()]
+        tile_shape = m_tiles, m_groups, 8, k_tiles, k_groups, 4
+        tile_order = 0, 3, 4, 1, 2, 5
+        a_tiles = a_pad.reshape(*tile_shape).transpose(*tile_order).ravel()
+        a_u64 = [f'0x{u:016x}' for u in a_tiles.view(np.uint64)]
 
         # Predicate-elision flags
         n_col_aligned = (self.n is not None and self.n % n_per_warp == 0)
-        def pm_runtime(mt):
-            return (mt + 1) * 8 > m
+        def pm_runtime(mt, mg=0):
+            return mt*tile_m + 8*(mg + 1) > m
 
         return {
-            'warps_per_cta': warps_per_cta,
+            'tile_m': tile_m,
+            'tile_n': tile_n,
+            'tile_k': tile_k,
+            'ptx_mma_shape': ptx_shape,
+            'm_groups': m_groups,
+            'k_groups': k_groups,
+            'a_regs': a_regs,
+            'b_regs': b_regs,
+            'c_regs': c_regs,
+            'a_elems': m_tiles * k_tiles * tile_m * tile_k,
             'nn': nn,
             'm_tiles': m_tiles,
             'k_tiles': k_tiles,
             'k_rem': k_rem,
-            'm_pad': m_tiles * 8,
-            'k_pad': k_tiles * 4,
             'a_u64': a_u64,
             'n_per_warp': n_per_warp,
             'n_per_cta': n_per_cta,
-            'frag_stride_bytes': 32 * 8,
-            'b_kiter_stride': 4 * (self.ldb or 0) * 8,
-            'b_ntile_stride': 8 * 8,
-            'c_mtile_stride': 8 * (self.ldc or 0) * 8,
-            'c_ntile_stride': 8 * 8,
+            'frag_stride_bytes': 8 * tile_m * tile_k,
+            'b_kiter_stride': 8 * tile_k * (self.ldb or 0),
+            'b_kgroup_stride': 32 * (self.ldb or 0),
+            'b_ntile_stride': 8 * tile_n,
+            'c_mtile_stride': 8 * tile_m * (self.ldc or 0),
+            'c_mgroup_stride': 64 * (self.ldc or 0),
+            'c_ntile_stride': 8 * tile_n,
             'n_col_aligned': n_col_aligned,
             'pm_runtime': pm_runtime,
-            'block_stealing': block_steal,
         }
 
-    def _dense_ws_args(self, kernel_cfg, params, smem_info, args, meta):
+    def _dense_ws_args(self, kernel_cfg, params, cc, smem_info, args, meta):
         dynamic_max = smem_info[1]
         tpl = kernel_cfg['template']
         nn = params['nn']
+        tile = kernel_cfg['tile']
         warp_map = kernel_cfg['warp_map']
 
         match tpl:
             case 'dmma-steal-ws':
-                block_steal, service_warps = True, 2
+                if (tile['m'], tile['n'], tile['k']) != (8, 8, 4):
+                    return None
+                service_warps = 2
             case 'dmma-stride-ws':
-                block_steal, service_warps = False, 1
+                service_warps = 1
             case _:
-                raise ValueError(f'Unknown dense warp-specialized template '
+                raise ValueError('Unknown dense warp-specialized template '
                                  f'{tpl}')
 
         n_comp_warps = warp_map['compute_count']
-        setup = self._dense_common(nn, n_comp_warps, block_steal)
+        setup = self._dense_common(nn, n_comp_warps, tile, cc)
         if setup is None:
             return None
 
         n_per_cta = setup['n_per_cta']
-        b_tile_bytes = setup['k_pad'] * n_per_cta * 8
-        c_tile_bytes = setup['m_pad'] * n_per_cta * 8
-        a_bytes = setup['m_tiles'] * setup['k_tiles'] * 32 * 8
+        m_pad = setup['m_tiles'] * setup['tile_m']
+        k_pad = setup['k_tiles'] * setup['tile_k']
+        b_tile_bytes = 8 * k_pad * n_per_cta
+        c_tile_bytes = 8 * m_pad * n_per_cta
+        a_bytes = 8 * setup['a_elems']
         regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
                    ('c', c_tile_bytes), ('a', a_bytes)]
         ws_setup = {
@@ -350,8 +306,9 @@ class PTXMatMul(MatMul):
             'prod_warp': warp_map['producer'],
             'comp_threads': 32 * n_comp_warps,
             'b_tile_bytes': b_tile_bytes,
-            'c_mtile_smem_stride': 8 * n_per_cta * 8,
-            'c_ntile_smem_stride': 8 * 8,
+            'c_mtile_smem_stride': 8 * setup['tile_m'] * n_per_cta,
+            'c_mgroup_smem_stride': 64 * n_per_cta,
+            'c_ntile_smem_stride': 8 * setup['tile_n'],
         }
 
         match tpl:
@@ -380,54 +337,106 @@ class PTXMatMul(MatMul):
         args |= setup | ws_setup | offsets
         meta |= {
             'grid': grid,
-            'ws_b_tile': (n_per_cta, setup['k_pad']),
+            'ws_b_tile': (n_per_cta, k_pad),
             'dynamic_shared': dynm_total_bytes,
         }
         if self.beta != 0:
-            meta['ws_out_tile'] = (n_per_cta, setup['m_pad'])
+            meta['ws_out_tile'] = (n_per_cta, m_pad)
 
         return tpl, args, meta
 
-    def _dense_astream_msplit_args(self, kernel_cfg, params, smem_info, args,
-                                   meta):
-        dynamic_max = smem_info[1]
-        nn = params.get('nn')
-        warps = params.get('warps')
-        msplit = params.get('msplit')
-        vector_width = kernel_cfg.get('vector_width')
-        setup = self._dense_common(nn, warps, False, vector_width)
-        if setup is None:
-            return None
+    def _usable_config(self, kernel_cfg, dtype, cc, smem_info):
+        family = kernel_cfg['family']
 
-        n_per_cta = setup['n_per_cta']
+        if family == 'sparse' and not self.is_sparse_suitable(self.A, cc):
+            return False
+        elif (family in {'dense', 'dense-ws'}
+              and (dtype != 'double' or self.n is None
+                   or not self.is_dense_suitable(self.A, cc))):
+            return False
 
-        b_tile_bytes = setup['k_pad'] * n_per_cta * args['dwidth_i']
-        regions = [('b', b_tile_bytes)]
-        msplit_setup = {
-            'msplit': msplit,
-            'm_tiles_per_group': -(-setup['m_tiles'] // msplit),
-            'b_tile_bytes': b_tile_bytes,
-            'b_smem_kiter_stride': 4 * n_per_cta * args['dwidth_i'],
-            'b_smem_ntile_stride': 8 * args['dwidth_i'],
-            'blockx_total': 32 * warps * msplit,
+        condition = kernel_cfg.get('conditions')
+        if condition is None:
+            return True
+        else:
+            stats = self._matmul_stats(dtype, cc, smem_info)
+            return self._eval_condition(condition, stats)
+
+    def _cc_config(self, cc):
+        cc = cc or (0, 0)
+        if cc not in self._config_cache:
+            path = f'kernels/ptx/config/sm{cc[0]}{cc[1]}.json'
+
+            try:
+                cfgdir = pkgutil.get_data('gimmik', path)
+            except FileNotFoundError:
+                cfgdir = pkgutil.get_data('gimmik', self.DEFAULT_CFG)
+            cfg = json.loads(cfgdir.decode('utf-8'))
+
+            self._config_cache[cc] = cfg
+        return self._config_cache[cc]
+
+    def _matmul_stats(self, dtype, cc, smem_info):
+        nnz = np.count_nonzero(self.A)
+        return {
+            'dtype': dtype,
+            'm': self.m,
+            'k': self.k,
+            'n': self.n,
+            'beta': self.beta,
+            'beta_zero': self.beta == 0,
+            'aligne': self.aligne,
+            'nnz': nnz,
+            'density': nnz / self.A.size,
+            'unique_abs': len(np.unique(np.abs(self.A))),
+            'k_used': len(self.bix),
+            'cc': list(cc),
+            'smem_static': smem_info[0],
+            'smem_dynamic': smem_info[1],
         }
 
-        offsets, dynm_total_bytes = self._dsmem_alloc(regions, ('tma',))
-        if dynm_total_bytes > dynamic_max:
-            return None
+    def _eval_condition(self, condition, stats):
+        if 'all' in condition:
+            return all(self._eval_condition(c, stats) for c in condition['all'])
+        if 'any' in condition:
+            return any(self._eval_condition(c, stats) for c in condition['any'])
+        if 'not' in condition:
+            return not self._eval_condition(condition['not'], stats)
 
-        args |= setup | msplit_setup | offsets
-        meta |= {
-            'grid': (-(-self.n // n_per_cta), 1, 1),
-            'ws_b_tile': (n_per_cta, setup['k_pad']),
-            'dynamic_shared': dynm_total_bytes,
-        }
+        value = stats[condition['field']]
+        op = next(k for k in condition if k != 'field')
+        expected = condition[op]
 
-        tpl = f"{kernel_cfg['template']}-v{vector_width}"
-        return tpl, args, meta
+        match op:
+            case 'eq':
+                return value == expected
+            case 'ne':
+                return value != expected
+            case 'lt':
+                return value is not None and value < expected
+            case 'lte':
+                return value is not None and value <= expected
+            case 'gt':
+                return value is not None and value > expected
+            case 'gte':
+                return value is not None and value >= expected
+            case 'in':
+                return value in expected
+            case 'is_null':
+                return value is None
+            case 'is_not':
+                return value is not None
+            case 'divisible_by':
+                return value is not None and value % expected == 0
+            case 'is_null_or_divisible_by':
+                return (value is None or value % expected == 0)
+            case _:
+                raise ValueError(f'op `{op}` not supported')
 
     @staticmethod
     def _dsmem_alloc(regions, mbars, align=16):
+        # For a set of regions and mbars and there sizes, work out dynamic
+        # shared memory pointers offset for a given alignemnt.
         out, off = {}, 0
         for name, size in regions:
             off = (off + align - 1) & ~(align - 1)
@@ -440,7 +449,13 @@ class PTXMatMul(MatMul):
         return out, total
 
     @staticmethod
-    def _pred_emit(instr, *preds, pred_reg=None, indent=' ' * 8):
+    def _reg_list(prefix, n):
+        regs = ', '.join(f'{prefix}_{i}' for i in range(n))
+        return f'{{{regs}}}'
+
+    @staticmethod
+    def _pred_emit(instr, *preds, pred_reg=None, indent=8 * ' '):
+        # Handle whether an instruction needs a predicate or not
         actual = [p for p in preds if p is not None]
         if not actual:
             return instr

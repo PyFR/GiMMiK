@@ -5,18 +5,21 @@
   "kernels": [
     {
       "template": "cstream",
+      "family": "sparse",
       "block": [128, 1, 1],
       "width": 1,
       "descriptor": "cstream"
     },
     {
       "template": "bstream",
+      "family": "sparse",
       "block": [128, 1, 1],
       "width": 1,
       "descriptor": "bstream"
     },
     {
       "template": "bstream-msplit",
+      "family": "sparse",
       "block": [32, 4, 1],
       "width": 1,
       "params": {
@@ -26,6 +29,7 @@
     },
     {
       "template": "bstream-msplit",
+      "family": "sparse",
       "block": [64, 1, 1],
       "width": 1,
       "params": {
@@ -42,6 +46,7 @@
     },
     {
       "template": "cstream-ksplit",
+      "family": "sparse",
       "block": [32, 2, 1],
       "width": 1,
       "params": {
@@ -51,6 +56,7 @@
     },
     {
       "template": "cstream-ksplit",
+      "family": "sparse",
       "block": [32, 4, 1],
       "width": 1,
       "params": {
@@ -64,6 +70,7 @@
     },
     {
       "template": "cstream-w2",
+      "family": "sparse",
       "block": [128, 1, 1],
       "width": 2,
       "conditions": {

@@ -141,7 +141,7 @@ $L_WAIT_BRDY:
         }
 %  for mt in range(m_tiles):
 <%
-    row_tail = (m_pad > m) and ((mt + 1) * 8 > m)
+    row_tail = pm_runtime(mt)
 %>
 %   if row_tail:
         .reg .pred p_row_${mt};
