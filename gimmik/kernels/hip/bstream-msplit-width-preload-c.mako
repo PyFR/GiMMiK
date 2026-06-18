@@ -1,5 +1,45 @@
 <%inherit file='base'/>
 
+% if width == 2:
+static inline __device__ ${dtype}
+gimmik_vmul(${dtype[:-1]} a, ${dtype} b)
+{
+    return make_${dtype}(a*b.x, a*b.y);
+}
+
+static inline __device__ ${dtype}
+gimmik_vadd(${dtype} a, ${dtype} b)
+{
+    return make_${dtype}(a.x + b.x, a.y + b.y);
+}
+
+static inline __device__ ${dtype}
+gimmik_vmadd(${dtype} acc, ${dtype[:-1]} a, ${dtype} b)
+{
+    return make_${dtype}(acc.x + a*b.x, acc.y + a*b.y);
+}
+% elif width == 4:
+static inline __device__ ${dtype}
+gimmik_vmul(${dtype[:-1]} a, ${dtype} b)
+{
+    return make_${dtype}(a*b.x, a*b.y, a*b.z, a*b.w);
+}
+
+static inline __device__ ${dtype}
+gimmik_vadd(${dtype} a, ${dtype} b)
+{
+    return make_${dtype}(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w);
+}
+
+static inline __device__ ${dtype}
+gimmik_vmadd(${dtype} acc, ${dtype[:-1]} a, ${dtype} b)
+{
+    return make_${dtype}(acc.x + a*b.x, acc.y + a*b.y, acc.z + a*b.z, acc.w + a*b.w);
+}
+% else:
+#error "bstream_msplit_width_preload_c only supports width=2 or width=4"
+% endif
+
 <%
 mx = partition(A, into=msplit, by='rows')
 bchunks = chunk(bix, bsz)
@@ -12,7 +52,7 @@ ${kname}(int n,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -37,6 +77,19 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         bsub[0][${loop.index}][threadIdx.x] = b[i + ${kx}*ldb];
     % endif
   % endfor
+
+  ## Preload C values for active rows owned by this m-split lane
+  % for j, jx in enumerate(mx[cid]):
+    % if afix[jx] != -1:
+      % if beta == 0:
+        csub[${j}] = make_zero();
+      % elif beta == 1:
+        csub[${j}] = nt_load_c(&c[i + ${jx}*ldc]);
+      % else:
+        csub[${j}] = gimmik_vmul(${beta}, nt_load_c(&c[i + ${jx}*ldc]));
+      % endif
+    % endif
+  % endfor
     }
 % endfor
     __syncthreads();
@@ -59,18 +112,12 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % for kx in bchunks[bb]:
         bv = bsub[${bb % 2}][${loop.index}][threadIdx.x];
       % for j, jx in enumerate(A[mcx, kx]):
-        % if jx != 0 and kx == afix[mcx[j]]:
-        csub[${j}] = ${jx}*bv;
-        % elif jx != 0:
-        csub[${j}] += ${jx}*bv;
+        % if jx != 0:
+        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
         % endif
         ## If we're done with this dot product then store to global
-        % if kx == alix[mcx[j]] and beta == 0:
+        % if kx == alix[mcx[j]]:
         nt_store_c(&c[i + ${mcx[j]}*ldc], csub[${j}]);
-        % elif kx == alix[mcx[j]] and beta == 1:
-        nt_store_c(&c[i + ${mcx[j]}*ldc], nt_load_c(&c[i + ${mcx[j]}*ldc]) + csub[${j}]);
-        % elif kx == alix[mcx[j]]:
-        nt_store_c(&c[i + ${mcx[j]}*ldc], csub[${j}] + ${beta}*nt_load_c(&c[i + ${mcx[j]}*ldc]));
         % endif
       % endfor
     % endfor
@@ -80,7 +127,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         % if jx == -1 and j % msplit == cid and beta == 0:
         nt_store_c(&c[i + ${j}*ldc], make_zero());
         % elif jx == -1 and j % msplit == cid and beta != 1:
-        nt_store_c(&c[i + ${j}*ldc], nt_load_c(&c[i + ${j}*ldc])*${beta});
+        nt_store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, nt_load_c(&c[i + ${j}*ldc])));
         % endif
       % endfor
     % endif

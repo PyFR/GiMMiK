@@ -2,7 +2,7 @@
 
 <% ksplit = 2 if m < 36 else 1 %>
 
-__global__ __launch_bounds__(${blockx}) void
+__global__ __launch_bounds__(128) void
 % if n is None:
 ${kname}(int n,
          const ${dtype}* __restrict__ b, int ldb,
@@ -27,16 +27,24 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     {
 % for j, jx in enumerate(A):
   % if (dotex := dot(lambda kx: f'b[i + {kx}*ldb]', jx, maxsplit=ksplit)) != '0.0':
+    % if beta == 0:
         dotp = ${dotex};
-  % else:
-        dotp = make_zero();
-  % endif
-  % if beta == 0:
         nt_store_c(&c[i + ${j}*ldc], dotp);
-  % elif beta == 1 and dotex != '0.0':
-        nt_store_c(&c[i + ${j}*ldc], nt_load_c(&c[i + ${j}*ldc]) + dotp);
+    % elif beta == 1:
+        dotp = nt_load_c(&c[i + ${j}*ldc]);
+        dotp += ${dotex};
+        nt_store_c(&c[i + ${j}*ldc], dotp);
+    % else:
+        dotp = ${beta}*nt_load_c(&c[i + ${j}*ldc]);
+        dotp += ${dotex};
+        nt_store_c(&c[i + ${j}*ldc], dotp);
+    % endif
   % else:
-        nt_store_c(&c[i + ${j}*ldc], dotp + ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+    % if beta == 0:
+        nt_store_c(&c[i + ${j}*ldc], make_zero());
+    % elif beta != 1:
+        nt_store_c(&c[i + ${j}*ldc], ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+    % endif
   % endif
 % endfor
     }

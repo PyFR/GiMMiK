@@ -43,14 +43,26 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         bv[${loop.index}] = b[i + ${kx}*ldb]; <% loaded.add(kx) %>
         % endif
       % endfor
-      % if (dotex := dot(lambda kx: f'bv[{kx}]', A[j, kbx])) != '0.0':
+      <%
+      dotex = dot(lambda kx: f'bv[{kx}]', A[j, kbx])
+      has_dotp = any(A[j, kx] != 0 for kx in range(k))
+      %>
+      % if dotex != '0.0':
         dotp = ${dotex};
       % else:
         dotp = make_zero();
       % endif
       ## Save to a register
       % if loop.index % ksplit == bid:
+        % if beta == 0:
         cv[${loop.index // ksplit}] = dotp;
+        % elif beta == 1 and has_dotp:
+        cv[${loop.index // ksplit}] = nt_load_c(&c[i + ${j}*ldc]);
+        cv[${loop.index // ksplit}] += dotp;
+        % elif has_dotp:
+        cv[${loop.index // ksplit}] = ${beta}*nt_load_c(&c[i + ${j}*ldc]);
+        cv[${loop.index // ksplit}] += dotp;
+        % endif
       ## Save to shared memory
       % else:
         csub[${bid - (bid > loop.index % ksplit)}][${loop.index}][threadIdx.x] = dotp;
@@ -66,14 +78,21 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     ## Sum and output the final set of dot products
     % for j in cchunk:
       % if loop.index % ksplit == bid:
+        <% has_dotp = any(A[j, kx] != 0 for kx in range(k)) %>
+        % if beta == 0:
         dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
                                                           for i in range(ksplit - 1))};
-        % if beta == 0:
         nt_store_c(&c[i + ${j}*ldc], dotp);
-        % elif beta == 1:
-        nt_store_c(&c[i + ${j}*ldc], nt_load_c(&c[i + ${j}*ldc]) + dotp);
-        % else:
-        nt_store_c(&c[i + ${j}*ldc], dotp + ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+        % elif beta == 1 and has_dotp:
+        dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
+                                                          for i in range(ksplit - 1))};
+        nt_store_c(&c[i + ${j}*ldc], dotp);
+        % elif beta != 1 and has_dotp:
+        dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
+                                                          for i in range(ksplit - 1))};
+        nt_store_c(&c[i + ${j}*ldc], dotp);
+        % elif beta != 1:
+        nt_store_c(&c[i + ${j}*ldc], ${beta}*nt_load_c(&c[i + ${j}*ldc]));
         % endif
       % endif
     % endfor

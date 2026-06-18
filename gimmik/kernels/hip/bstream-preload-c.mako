@@ -24,22 +24,29 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     {
         ${dtype} bv, csub[${m}];
 
-## Iterare through the used rows of B
+## Preload C values for rows which will receive a non-zero dot product
+% for j, jx in enumerate(afix):
+  % if jx != -1:
+    % if beta == 0:
+        csub[${j}] = make_zero();
+    % elif beta == 1:
+        csub[${j}] = nt_load_c(&c[i + ${j}*ldc]);
+    % else:
+        csub[${j}] = ${beta}*nt_load_c(&c[i + ${j}*ldc]);
+    % endif
+  % endif
+% endfor
+
+## Iterate through the used rows of B
 % for kx in bix:
         bv = b[i + ${kx}*ldb];
   % for j, jx in enumerate(A[:, kx]):
-    % if jx != 0 and kx == afix[j]:
-        csub[${j}] = ${jx}*bv;
-    % elif jx != 0:
+    % if jx != 0:
         csub[${j}] += ${jx}*bv;
     % endif
     ##
-    % if kx == alix[j] and beta == 0:
+    % if kx == alix[j]:
         nt_store_c(&c[i + ${j}*ldc], csub[${j}]);
-    % elif kx == alix[j] and beta == 1:
-        nt_store_c(&c[i + ${j}*ldc], nt_load_c(&c[i + ${j}*ldc]) + csub[${j}]);
-    % elif kx == alix[j]:
-        nt_store_c(&c[i + ${j}*ldc], csub[${j}] + ${beta}*nt_load_c(&c[i + ${j}*ldc]));
     % endif
   % endfor
 % endfor
@@ -49,7 +56,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
   % if jx == -1 and beta == 0:
         nt_store_c(&c[i + ${j}*ldc], make_zero());
   % elif jx == -1 and beta != 1:
-        nt_store_c(&c[i + ${j}*ldc], nt_load_c(&c[i + ${j}*ldc])*${beta});
+        nt_store_c(&c[i + ${j}*ldc], ${beta}*nt_load_c(&c[i + ${j}*ldc]));
   % endif
 % endfor
     }
