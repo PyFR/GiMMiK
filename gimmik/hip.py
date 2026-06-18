@@ -19,11 +19,13 @@ class HIPMatMul(MatMul):
             if threads <= max_block_threads and shared <= max_shared:
                 yield (name, args, meta)
 
+        blkx = self.basemeta['block'][0]
+
         # B loading, C streaming kernel
-        yield from emit('cstream', {}, {})
+        yield from emit('cstream', {'blockx': blkx}, {})
 
         # B streaming, C accumulation kernel
-        yield from emit('bstream', {}, {})
+        yield from emit('bstream', {'blockx': blkx}, {})
 
         # Four-way m-split B streaming, C accumulation kernel
         ms, bsz, blkx = 4, 24, 64
