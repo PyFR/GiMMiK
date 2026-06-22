@@ -45,7 +45,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
       % endfor
       <%
       dotex = dot(lambda kx: f'bv[{kx}]', A[j, kbx])
-      has_dotp = any(A[j, kx] != 0 for kx in range(k))
+      has_dotp = A[j].any()
       %>
       % if dotex != '0.0':
         dotp = ${dotex};
@@ -78,7 +78,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     ## Sum and output the final set of dot products
     % for j in cchunk:
       % if loop.index % ksplit == bid:
-        <% has_dotp = any(A[j, kx] != 0 for kx in range(k)) %>
+        <% has_dotp = A[j].any() %>
         % if beta == 0:
         dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
                                                           for i in range(ksplit - 1))};

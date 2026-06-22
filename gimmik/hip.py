@@ -39,6 +39,10 @@ class HIPMatMul(MatMul):
         meta = {'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize}
         yield from emit('cstream-ksplit', args, meta)
 
+        # Only emit tuned variants on the architecture they were tuned for.
+        if gcn_arch != 'gfx942' or warp_size != 64:
+            return
+
         # Tuned HIP variants
         msplits, ksplits = [4, 8], [2, 4]
         bsz, csz, blkx = 8, 8, 64
