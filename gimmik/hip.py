@@ -40,7 +40,8 @@ class HIPMatMul(MatMul):
         yield from emit('cstream-ksplit', args, meta)
 
         # Only emit tuned variants on the architecture they were tuned for.
-        if gcn_arch != 'gfx942' or warp_size != 64:
+        base_arch = gcn_arch.split(':', 1)[0] if gcn_arch else None
+        if base_arch != 'gfx942' or warp_size != 64:
             return
 
         # Tuned HIP variants
