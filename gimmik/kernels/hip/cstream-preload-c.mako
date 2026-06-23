@@ -2,7 +2,7 @@
 
 <% ksplit = 2 if m < 36 else 1 %>
 
-__global__ __launch_bounds__(128) void
+__global__ __launch_bounds__(${blockx}) void
 % if n is None:
 ${kname}(int n,
          const ${dtype}* __restrict__ b, int ldb,
