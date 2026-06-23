@@ -13,7 +13,7 @@ ${kname}(int n,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -44,24 +44,27 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         % endif
       % endfor
       <%
-      dotex = dot(lambda kx: f'bv[{kx}]', A[j, kbx])
+      nzixs = [(l_idx, kbx[l_idx]) for l_idx in A[j, kbx].nonzero()[0]]
       has_dotp = A[j].any()
+      if nzixs:
+          first_l_idx, first_kx = nzixs[0]
+          dotex = f"gimmik_vmul({A[j, first_kx]}, bv[{first_l_idx}])"
+          for l_idx, kx in nzixs[1:]:
+              dotex = f"gimmik_vmadd({dotex}, {A[j, kx]}, bv[{l_idx}])"
+      else:
+          dotex = 'make_zero()'
       %>
-      % if dotex != '0.0':
         dotp = ${dotex};
-      % else:
-        dotp = make_zero();
-      % endif
       ## Save to a register
       % if loop.index % ksplit == bid:
         % if beta == 0:
         cv[${loop.index // ksplit}] = dotp;
         % elif beta == 1 and has_dotp:
-        cv[${loop.index // ksplit}] = nt_load_c(&c[i + ${j}*ldc]);
-        cv[${loop.index // ksplit}] += dotp;
+        cv[${loop.index // ksplit}] = load_c(&c[i + ${j}*ldc]);
+        cv[${loop.index // ksplit}] = gimmik_vadd(cv[${loop.index // ksplit}], dotp);
         % elif has_dotp:
-        cv[${loop.index // ksplit}] = ${beta}*nt_load_c(&c[i + ${j}*ldc]);
-        cv[${loop.index // ksplit}] += dotp;
+        cv[${loop.index // ksplit}] = gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]));
+        cv[${loop.index // ksplit}] = gimmik_vadd(cv[${loop.index // ksplit}], dotp);
         % endif
       ## Save to shared memory
       % else:
@@ -79,20 +82,22 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % for j in cchunk:
       % if loop.index % ksplit == bid:
         <% has_dotp = A[j].any() %>
+        <%
+        sum_expr = f"cv[{loop.index // ksplit}]"
+        for s_idx in range(ksplit - 1):
+            sum_expr = f"gimmik_vadd({sum_expr}, csub[{s_idx}][{loop.index}][threadIdx.x])"
+        %>
         % if beta == 0:
-        dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
-                                                          for i in range(ksplit - 1))};
-        nt_store_c(&c[i + ${j}*ldc], dotp);
+        dotp = ${sum_expr};
+        store_c(&c[i + ${j}*ldc], dotp);
         % elif beta == 1 and has_dotp:
-        dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
-                                                          for i in range(ksplit - 1))};
-        nt_store_c(&c[i + ${j}*ldc], dotp);
+        dotp = ${sum_expr};
+        store_c(&c[i + ${j}*ldc], dotp);
         % elif beta != 1 and has_dotp:
-        dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
-                                                          for i in range(ksplit - 1))};
-        nt_store_c(&c[i + ${j}*ldc], dotp);
+        dotp = ${sum_expr};
+        store_c(&c[i + ${j}*ldc], dotp);
         % elif beta != 1:
-        nt_store_c(&c[i + ${j}*ldc], ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+        store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc])));
         % endif
       % endif
     % endfor

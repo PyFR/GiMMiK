@@ -13,7 +13,7 @@ ${kname}(int n,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -43,11 +43,17 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         bv[${loop.index}] = b[i + ${kx}*ldb]; <% loaded.add(kx) %>
         % endif
       % endfor
-      % if (dotex := dot(lambda kx: f'bv[{kx}]', A[j, kbx])) != '0.0':
+      <%
+      nzixs = [(l_idx, kbx[l_idx]) for l_idx in A[j, kbx].nonzero()[0]]
+      if nzixs:
+          first_l_idx, first_kx = nzixs[0]
+          dotex = f"gimmik_vmul({A[j, first_kx]}, bv[{first_l_idx}])"
+          for l_idx, kx in nzixs[1:]:
+              dotex = f"gimmik_vmadd({dotex}, {A[j, kx]}, bv[{l_idx}])"
+      else:
+          dotex = 'make_zero()'
+      %>
         dotp = ${dotex};
-      % else:
-        dotp = make_zero();
-      % endif
       ## Save to a register
       % if loop.index % ksplit == bid:
         cv[${loop.index // ksplit}] = dotp;
@@ -66,14 +72,18 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     ## Sum and output the final set of dot products
     % for j in cchunk:
       % if loop.index % ksplit == bid:
-        dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
-                                                          for i in range(ksplit - 1))};
+        <%
+        sum_expr = f"cv[{loop.index // ksplit}]"
+        for s_idx in range(ksplit - 1):
+            sum_expr = f"gimmik_vadd({sum_expr}, csub[{s_idx}][{loop.index}][threadIdx.x])"
+        %>
+        dotp = ${sum_expr};
         % if beta == 0:
-        nt_store_c(&c[i + ${j}*ldc], dotp);
+        store_c(&c[i + ${j}*ldc], dotp);
         % elif beta == 1:
-        nt_store_c(&c[i + ${j}*ldc], nt_load_c(&c[i + ${j}*ldc]) + dotp);
+        store_c(&c[i + ${j}*ldc], gimmik_vadd(load_c(&c[i + ${j}*ldc]), dotp));
         % else:
-        nt_store_c(&c[i + ${j}*ldc], dotp + ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+        store_c(&c[i + ${j}*ldc], gimmik_vadd(dotp, gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]))));
         % endif
       % endif
     % endfor

@@ -47,96 +47,83 @@ class HIPMatMul(MatMul):
         # Tuned HIP variants
         msplits, ksplits = [4, 8], [2, 4]
         bsz, csz, blkx = 8, 8, 64
-        width = 2 if self.aligne is not None and self.aligne % 2 == 0 else 1
+        widths = [1]
+        if self.aligne is not None and self.aligne % 2 == 0:
+            widths.append(2)
 
-        # B loading, C streaming kernel
-        args = {'blockx': blkx}
-        meta = {'block': (blkx, 1, 1), 'desc': f'cstream/x{blkx}'}
-        yield from emit('cstream', args, meta)
+        for width in widths:
+            wargs = ({'dtype': f'{dtype}{width}', 'width': width}
+                     if width > 1 else {})
+            wmeta = {'width': width} if width > 1 else {}
+            wpfx = f'w{width}-' if width > 1 else ''
 
-        # B streaming, C accumulation kernel
-        meta = {'block': (blkx, 1, 1), 'desc': f'bstream/x{blkx}'}
-        yield from emit('bstream', args, meta)
+            # B loading, C streaming kernel
+            args = {'blockx': blkx} | wargs
+            meta = {'block': (blkx, 1, 1),
+                    'desc': f'cstream/{wpfx}x{blkx}'} | wmeta
+            yield from emit('cstream', args, meta)
 
-        for ms in msplits:
-            # m-split B streaming, C accumulation kernel
-            args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
-            shared = 2*bsz*blkx*dsize
-            meta = {'block': (blkx, ms, 1), 'shared': shared,
-                    'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}'}
-            yield from emit('bstream-msplit', args, meta)
+            # B streaming, C accumulation kernel
+            meta = {'block': (blkx, 1, 1),
+                    'desc': f'bstream/{wpfx}x{blkx}'} | wmeta
+            yield from emit('bstream', args, meta)
 
-        for ks in ksplits:
-            # k-split B loading, C streaming kernel
-            args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
-            shared = (ks - 1)*csz*blkx*dsize
-            meta = {'block': (blkx, ks, 1), 'shared': shared,
-                    'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}'}
-            yield from emit('cstream-ksplit', args, meta)
-
-        # B loading, C preloading, C streaming kernel
-        args = {'blockx': blkx}
-        meta = {'block': (blkx, 1, 1), 'desc': f'cstream-preload-c/x{blkx}'}
-        yield from emit('cstream-preload-c', args, meta)
-
-        # B streaming, C preloading, C accumulation kernel
-        meta = {'block': (blkx, 1, 1), 'desc': f'bstream-preload-c/x{blkx}'}
-        yield from emit('bstream-preload-c', args, meta)
-
-        if width > 1:
-            args = {'dtype': f'{dtype}{width}', 'width': width,
-                    'blockx': blkx}
-            meta = {'block': (blkx, 1, 1), 'width': width,
-                    'desc': f'cstream-width-preload-c/w{width}-x{blkx}'}
-            yield from emit('cstream-width-preload-c', args, meta)
-
-            meta = {'block': (blkx, 1, 1), 'width': width,
-                    'desc': f'bstream-width-preload-c/w{width}-x{blkx}'}
-            yield from emit('bstream-width-preload-c', args, meta)
-
-        for ms in msplits:
-            # m-split B streaming, C preloading, C accumulation kernel
-            args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
-            shared = 2*bsz*blkx*dsize
-            meta = {'block': (blkx, ms, 1), 'shared': shared,
-                    'desc': f'bstream-msplit-preload-c/m{ms}-b{bsz}-x{blkx}'}
-            yield from emit('bstream-msplit-preload-c', args, meta)
-
-            if width > 1:
-                args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx,
-                        'dtype': f'{dtype}{width}', 'width': width}
+            for ms in msplits:
+                # m-split B streaming, C accumulation kernel
+                args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx} | wargs
+                shared = 2*bsz*blkx*dsize*width
                 meta = {
-                    'block': (blkx, ms, 1), 'shared': shared*width,
-                    'width': width,
-                    'desc': (
-                        f'bstream-msplit-width-preload-c/w{width}-'
-                        f'm{ms}-b{bsz}-x{blkx}'
-                    )
-                }
-                yield from emit('bstream-msplit-width-preload-c', args, meta)
+                    'block': (blkx, ms, 1), 'shared': shared,
+                    'desc': f'bstream-msplit/{wpfx}m{ms}-b{bsz}-x{blkx}'
+                } | wmeta
+                yield from emit('bstream-msplit', args, meta)
 
-        for ks in ksplits:
-            # k-split B loading, C preloading, C streaming kernel
-            args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
-            shared = (ks - 1)*csz*blkx*dsize
-            meta = {
-                'block': (blkx, ks, 1), 'shared': shared,
-                'desc': f'cstream-ksplit-preload-c/k{ks}-c{csz}-x{blkx}'
-            }
-            yield from emit('cstream-ksplit-preload-c', args, meta)
-
-            if width > 1:
-                args = {'ksplit': ks, 'csz': csz, 'blockx': blkx,
-                        'dtype': f'{dtype}{width}', 'width': width}
+            for ks in ksplits:
+                # k-split B loading, C streaming kernel
+                args = {'ksplit': ks, 'csz': csz, 'blockx': blkx} | wargs
+                shared = (ks - 1)*csz*blkx*dsize*width
                 meta = {
-                    'block': (blkx, ks, 1), 'shared': shared*width,
-                    'width': width,
+                    'block': (blkx, ks, 1), 'shared': shared,
+                    'desc': f'cstream-ksplit/{wpfx}k{ks}-c{csz}-x{blkx}'
+                } | wmeta
+                yield from emit('cstream-ksplit', args, meta)
+
+            # B loading, C preloading, C streaming kernel
+            args = {'blockx': blkx} | wargs
+            meta = {'block': (blkx, 1, 1),
+                    'desc': f'cstream-preload-c/{wpfx}x{blkx}'} | wmeta
+            yield from emit('cstream-preload-c', args, meta)
+
+            # B streaming, C preloading, C accumulation kernel
+            meta = {'block': (blkx, 1, 1),
+                    'desc': f'bstream-preload-c/{wpfx}x{blkx}'} | wmeta
+            yield from emit('bstream-preload-c', args, meta)
+
+            for ms in msplits:
+                # m-split B streaming, C preloading, C accumulation kernel
+                args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx} | wargs
+                shared = 2*bsz*blkx*dsize*width
+                meta = {
+                    'block': (blkx, ms, 1), 'shared': shared,
                     'desc': (
-                        f'cstream-ksplit-width-preload-c/w{width}-'
-                        f'k{ks}-c{csz}-x{blkx}'
+                        f'bstream-msplit-preload-c/'
+                        f'{wpfx}m{ms}-b{bsz}-x{blkx}'
                     )
-                }
-                yield from emit('cstream-ksplit-width-preload-c', args, meta)
+                } | wmeta
+                yield from emit('bstream-msplit-preload-c', args, meta)
+
+            for ks in ksplits:
+                # k-split B loading, C preloading, C streaming kernel
+                args = {'ksplit': ks, 'csz': csz, 'blockx': blkx} | wargs
+                shared = (ks - 1)*csz*blkx*dsize*width
+                meta = {
+                    'block': (blkx, ks, 1), 'shared': shared,
+                    'desc': (
+                        f'cstream-ksplit-preload-c/'
+                        f'{wpfx}k{ks}-c{csz}-x{blkx}'
+                    )
+                } | wmeta
+                yield from emit('cstream-ksplit-preload-c', args, meta)
 
     def _process_meta(self, meta):
         if self.n is not None:

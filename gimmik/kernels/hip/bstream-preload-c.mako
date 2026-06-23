@@ -7,7 +7,7 @@ ${kname}(int n,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -24,29 +24,35 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     {
         ${dtype} bv, csub[${m}];
 
+% if beta != 0:
 ## Preload C values for rows which will receive a non-zero dot product
 % for j, jx in enumerate(afix):
   % if jx != -1:
-    % if beta == 0:
-        csub[${j}] = make_zero();
-    % elif beta == 1:
-        csub[${j}] = nt_load_c(&c[i + ${j}*ldc]);
+    % if beta == 1:
+        csub[${j}] = load_c(&c[i + ${j}*ldc]);
     % else:
-        csub[${j}] = ${beta}*nt_load_c(&c[i + ${j}*ldc]);
+        csub[${j}] = gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]));
     % endif
   % endif
 % endfor
+% endif
 
 ## Iterate through the used rows of B
 % for kx in bix:
         bv = b[i + ${kx}*ldb];
   % for j, jx in enumerate(A[:, kx]):
-    % if jx != 0:
-        csub[${j}] += ${jx}*bv;
+    % if beta == 0:
+      % if jx != 0 and kx == afix[j]:
+        csub[${j}] = gimmik_vmul(${jx}, bv);
+      % elif jx != 0:
+        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
+      % endif
+    % elif jx != 0:
+        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
     % endif
     ##
     % if kx == alix[j]:
-        nt_store_c(&c[i + ${j}*ldc], csub[${j}]);
+        store_c(&c[i + ${j}*ldc], csub[${j}]);
     % endif
   % endfor
 % endfor
@@ -54,9 +60,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 ## Handle rows of A which are all zero
 % for j, jx in enumerate(afix):
   % if jx == -1 and beta == 0:
-        nt_store_c(&c[i + ${j}*ldc], make_zero());
+        store_c(&c[i + ${j}*ldc], make_zero());
   % elif jx == -1 and beta != 1:
-        nt_store_c(&c[i + ${j}*ldc], ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+        store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc])));
   % endif
 % endfor
     }

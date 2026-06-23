@@ -7,7 +7,7 @@ ${kname}(int n,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -29,17 +29,17 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         bv = b[i + ${kx}*ldb];
   % for j, jx in enumerate(A[:, kx]):
     % if jx != 0 and kx == afix[j]:
-        csub[${j}] = ${jx}*bv;
+        csub[${j}] = gimmik_vmul(${jx}, bv);
     % elif jx != 0:
-        csub[${j}] += ${jx}*bv;
+        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
     % endif
     ##
     % if kx == alix[j] and beta == 0:
-        nt_store_c(&c[i + ${j}*ldc], csub[${j}]);
+        store_c(&c[i + ${j}*ldc], csub[${j}]);
     % elif kx == alix[j] and beta == 1:
-        nt_store_c(&c[i + ${j}*ldc], nt_load_c(&c[i + ${j}*ldc]) + csub[${j}]);
+        store_c(&c[i + ${j}*ldc], gimmik_vadd(load_c(&c[i + ${j}*ldc]), csub[${j}]));
     % elif kx == alix[j]:
-        nt_store_c(&c[i + ${j}*ldc], csub[${j}] + ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+        store_c(&c[i + ${j}*ldc], gimmik_vadd(csub[${j}], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]))));
     % endif
   % endfor
 % endfor
@@ -47,9 +47,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 ## Handle rows of A which are all zero
 % for j, jx in enumerate(afix):
   % if jx == -1 and beta == 0:
-        nt_store_c(&c[i + ${j}*ldc], make_zero());
+        store_c(&c[i + ${j}*ldc], make_zero());
   % elif jx == -1 and beta != 1:
-        nt_store_c(&c[i + ${j}*ldc], nt_load_c(&c[i + ${j}*ldc])*${beta});
+        store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc])));
   % endif
 % endfor
     }

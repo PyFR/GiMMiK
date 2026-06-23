@@ -9,7 +9,7 @@ ${kname}(int n,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -26,24 +26,34 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     if (i < n)
     {
 % for j, jx in enumerate(A):
-  % if (dotex := dot(lambda kx: f'b[i + {kx}*ldb]', jx, maxsplit=ksplit)) != '0.0':
+  <%
+  nzixs = [kx for kx, val in enumerate(jx) if val != 0]
+  if nzixs:
+      first_kx = nzixs[0]
+      dotex = f"gimmik_vmul({jx[first_kx]}, b[i + {first_kx}*ldb])"
+      for kx in nzixs[1:]:
+          dotex = f"gimmik_vmadd({dotex}, {jx[kx]}, b[i + {kx}*ldb])"
+  else:
+      dotex = 'make_zero()'
+  %>
+  % if nzixs:
     % if beta == 0:
         dotp = ${dotex};
-        nt_store_c(&c[i + ${j}*ldc], dotp);
+        store_c(&c[i + ${j}*ldc], dotp);
     % elif beta == 1:
-        dotp = nt_load_c(&c[i + ${j}*ldc]);
-        dotp += ${dotex};
-        nt_store_c(&c[i + ${j}*ldc], dotp);
+        dotp = load_c(&c[i + ${j}*ldc]);
+        dotp = gimmik_vadd(dotp, ${dotex});
+        store_c(&c[i + ${j}*ldc], dotp);
     % else:
-        dotp = ${beta}*nt_load_c(&c[i + ${j}*ldc]);
-        dotp += ${dotex};
-        nt_store_c(&c[i + ${j}*ldc], dotp);
+        dotp = gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]));
+        dotp = gimmik_vadd(dotp, ${dotex});
+        store_c(&c[i + ${j}*ldc], dotp);
     % endif
   % else:
     % if beta == 0:
-        nt_store_c(&c[i + ${j}*ldc], make_zero());
+        store_c(&c[i + ${j}*ldc], make_zero());
     % elif beta != 1:
-        nt_store_c(&c[i + ${j}*ldc], ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+        store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc])));
     % endif
   % endif
 % endfor

@@ -12,7 +12,7 @@ ${kname}(int n,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -38,18 +38,18 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % endif
   % endfor
 
+  % if beta != 0:
   ## Preload C values for active rows owned by this m-split lane
   % for j, jx in enumerate(mx[cid]):
     % if afix[jx] != -1:
-      % if beta == 0:
-        csub[${j}] = make_zero();
-      % elif beta == 1:
-        csub[${j}] = nt_load_c(&c[i + ${jx}*ldc]);
+      % if beta == 1:
+        csub[${j}] = load_c(&c[i + ${jx}*ldc]);
       % else:
-        csub[${j}] = ${beta}*nt_load_c(&c[i + ${jx}*ldc]);
+        csub[${j}] = gimmik_vmul(${beta}, load_c(&c[i + ${jx}*ldc]));
       % endif
     % endif
   % endfor
+  % endif
     }
 % endfor
     __syncthreads();
@@ -72,12 +72,18 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % for kx in bchunks[bb]:
         bv = bsub[${bb % 2}][${loop.index}][threadIdx.x];
       % for j, jx in enumerate(A[mcx, kx]):
-        % if jx != 0:
-        csub[${j}] += ${jx}*bv;
+        % if beta == 0:
+          % if jx != 0 and kx == afix[mcx[j]]:
+        csub[${j}] = gimmik_vmul(${jx}, bv);
+          % elif jx != 0:
+        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
+          % endif
+        % elif jx != 0:
+        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
         % endif
         ## If we're done with this dot product then store to global
         % if kx == alix[mcx[j]]:
-        nt_store_c(&c[i + ${mcx[j]}*ldc], csub[${j}]);
+        store_c(&c[i + ${mcx[j]}*ldc], csub[${j}]);
         % endif
       % endfor
     % endfor
@@ -85,9 +91,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % if loop.parent.last:
       % for j, jx in enumerate(afix):
         % if jx == -1 and j % msplit == cid and beta == 0:
-        nt_store_c(&c[i + ${j}*ldc], make_zero());
+        store_c(&c[i + ${j}*ldc], make_zero());
         % elif jx == -1 and j % msplit == cid and beta != 1:
-        nt_store_c(&c[i + ${j}*ldc], ${beta}*nt_load_c(&c[i + ${j}*ldc]));
+        store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc])));
         % endif
       % endfor
     % endif
