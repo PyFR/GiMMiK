@@ -102,26 +102,16 @@ nt_load_c(const ${dtype}* p)
 % endif
 }
 
-<% nt_c = context.get('nt_c', True) %>
-
 static inline __device__ void
 store_c(${dtype}* p, ${dtype} v)
 {
-% if nt_c:
     nt_store_c(p, v);
-% else:
-    *p = v;
-% endif
 }
 
 static inline __device__ ${dtype}
 load_c(const ${dtype}* p)
 {
-% if nt_c:
     return nt_load_c(p);
-% else:
-    return *p;
-% endif
 }
 
 ${next.body()}
