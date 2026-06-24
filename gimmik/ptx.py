@@ -49,7 +49,7 @@ class PTXMatMul(MatMul):
                            smem_info=None):
         cc = compute_capability or (0, 0)
         smem_info = smem_info or (48*1024, 48*1024)
-        config = self._cc_config(cc)
+        config = self._cc_config(cc, dtype)
         if cc in self.PTX_SM:
             target_cc = cc
             ptx = self.PTX_SM[cc]
@@ -144,11 +144,21 @@ class PTXMatMul(MatMul):
                 bsz = params['bsz']
                 args |= {'msplit': msplit, 'bsz': bsz, 'blockx': blockx}
                 meta['shared'] = 2*bsz*blockx*dsize
+            case 'bstream-msplit-v2':
+                msplit = block[1]
+                bsz = params['bsz']
+                args |= {'msplit': msplit, 'bsz': bsz, 'blockx': blockx}
+                meta['shared'] = 2*bsz*blockx*2*dsize
             case 'cstream-ksplit':
                 ksplit = block[1]
                 csz = params['csz']
                 args |= {'ksplit': ksplit, 'csz': csz, 'blockx': blockx}
                 meta['shared'] = (ksplit - 1)*csz*blockx*dsize
+            case 'cstream-ksplit-v2':
+                ksplit = block[1]
+                csz = params['csz']
+                args |= {'ksplit': ksplit, 'csz': csz, 'blockx': blockx}
+                meta['shared'] = (ksplit - 1)*csz*blockx*2*dsize
             case _:
                 args['blockx'] = blockx
         return tpl, args, meta
@@ -362,19 +372,41 @@ class PTXMatMul(MatMul):
             stats = self._matmul_stats(dtype, cc, smem_info)
             return self._eval_condition(condition, stats)
 
-    def _cc_config(self, cc):
-        cc = cc or (0, 0)
-        if cc not in self._config_cache:
-            path = f'kernels/ptx/config/sm{cc[0]}{cc[1]}.json'
+    @staticmethod
+    def _dtype_config_suffix(dtype):
+        if dtype is None:
+            raise ValueError('PTX config dtype is required')
 
-            try:
-                cfgdir = pkgutil.get_data('gimmik', path)
-            except FileNotFoundError:
-                cfgdir = pkgutil.get_data('gimmik', self.DEFAULT_CFG)
+        dtype_name = getattr(dtype, 'name', dtype)
+        if dtype_name in {'float', 'float32', 'single'}:
+            return 'fp32'
+        elif dtype_name in {'double', 'float64'}:
+            return 'fp64'
+
+        raise ValueError(f'Unsupported PTX config dtype {dtype_name!r}')
+
+    def _cc_config(self, cc, dtype):
+        cc = cc or (0, 0)
+        suffix = self._dtype_config_suffix(dtype)
+        key = (cc, suffix)
+        if key not in self._config_cache:
+            base = f'kernels/ptx/config/sm{cc[0]}{cc[1]}'
+            paths = [f'{base}_{suffix}.json', self.DEFAULT_CFG]
+
+            cfgdir = None
+            for path in paths:
+                try:
+                    cfgdir = pkgutil.get_data('gimmik', path)
+                except FileNotFoundError:
+                    continue
+
+                if cfgdir is not None:
+                    break
+
             cfg = json.loads(cfgdir.decode('utf-8'))
 
-            self._config_cache[cc] = cfg
-        return self._config_cache[cc]
+            self._config_cache[key] = cfg
+        return self._config_cache[key]
 
     def _matmul_stats(self, dtype, cc, smem_info):
         nnz = np.count_nonzero(self.A)

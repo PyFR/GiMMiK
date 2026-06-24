@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "cc": [
-    9,
+    10,
     0
   ],
   "ptx": [
     8,
-    6
+    7
   ],
   "kernels": [
     {
@@ -27,14 +27,101 @@
       "template": "bstream-msplit",
       "block": [
         32,
-        8,
+        4,
         1
       ],
       "width": 1,
       "params": {
-        "bsz": 24
+        "bsz": 32
       },
-      "descriptor": "bstream-msplit/m8-b24-x32",
+      "descriptor": "bstream-msplit/m4-b32-x32",
+      "family": "sparse"
+    },
+    {
+      "template": "bstream",
+      "block": [
+        64,
+        1,
+        1
+      ],
+      "width": 1,
+      "descriptor": "bstream/x64",
+      "family": "sparse"
+    },
+    {
+      "template": "bstream-msplit-v2",
+      "block": [
+        32,
+        4,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "bsz": 16
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "eq": "double"
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "bstream-msplit-v2/m4-b16-x32",
+      "family": "sparse"
+    },
+    {
+      "template": "cstream-ksplit-v2",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "csz": 24
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "eq": "double"
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "cstream-ksplit-v2/k2-c24-x32",
       "family": "sparse"
     },
     {
@@ -46,9 +133,37 @@
       ],
       "width": 1,
       "params": {
-        "csz": 24
+        "csz": 20
       },
-      "descriptor": "cstream-ksplit/k4-c24-x32",
+      "descriptor": "cstream-ksplit/k4-c20-x32",
+      "family": "sparse"
+    },
+    {
+      "template": "bstream-msplit",
+      "block": [
+        32,
+        8,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 32
+      },
+      "descriptor": "bstream-msplit/m8-b32-x32",
+      "family": "sparse"
+    },
+    {
+      "template": "bstream-msplit",
+      "block": [
+        32,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 32
+      },
+      "descriptor": "bstream-msplit/m1-b32-x32",
       "family": "sparse"
     },
     {
@@ -66,89 +181,74 @@
       "family": "sparse"
     },
     {
-      "template": "bstream",
+      "template": "cstream",
       "block": [
-        64,
+        128,
         1,
         1
       ],
       "width": 1,
-      "descriptor": "bstream/x64",
+      "descriptor": "cstream/x128",
       "family": "sparse"
     },
     {
-      "template": "bstream-msplit",
+      "template": "cstream-v2",
       "block": [
-        32,
-        2,
-        1
-      ],
-      "width": 1,
-      "params": {
-        "bsz": 32
-      },
-      "descriptor": "bstream-msplit/m2-b32-x32",
-      "family": "sparse"
-    },
-    {
-      "template": "bstream-msplit",
-      "block": [
-        64,
+        128,
         1,
         1
       ],
-      "width": 1,
-      "params": {
-        "bsz": 24
-      },
-      "descriptor": "bstream-msplit/m1-b24-x64",
-      "family": "sparse"
-    },
-    {
-      "template": "bstream-msplit",
-      "block": [
-        32,
-        4,
-        1
-      ],
-      "width": 1,
-      "params": {
-        "bsz": 32
-      },
-      "descriptor": "bstream-msplit/m4-b32-x32",
-      "family": "sparse"
-    },
-    {
-      "template": "dmma-asmem",
-      "vector_width": 2,
-      "block": [
-        256,
-        1,
-        1
-      ],
-      "width": 1,
-      "params": {
-        "nn": 1,
-        "warps": 8
-      },
+      "width": 2,
       "conditions": {
         "all": [
+          {
+            "field": "dtype",
+            "eq": "double"
+          },
           {
             "field": "n",
             "is_not": null
           },
           {
-            "field": "aligne",
-            "is_not": null
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "k_used",
+            "lte": 100
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "is_null_or_divisible_by": 2
           }
         ]
       },
-      "descriptor": "dmma-asmem/v2/nn1-w8",
-      "family": "dense",
+      "descriptor": "cstream-v2/x128",
+      "family": "sparse"
+    },
+    {
+      "template": "dmma-steal-ws",
+      "block": [
+        192,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 2
+      },
+      "warp_map": {
+        "compute_start": 0,
+        "compute_count": 4,
+        "producer": 4,
+        "stealer": 5
+      },
+      "conditions": {
+        "field": "n",
+        "is_not": null
+      },
+      "descriptor": "dmma-steal-ws/nn2-w4",
+      "family": "dense-ws",
       "tile": {
         "m": 8,
         "n": 8,
@@ -156,17 +256,18 @@
       }
     },
     {
-      "template": "dmma-astream",
+      "template": "dmma-astream-msplit",
       "vector_width": 2,
       "block": [
-        64,
+        128,
         1,
         1
       ],
       "width": 1,
       "params": {
         "nn": 2,
-        "warps": 2
+        "warps": 2,
+        "msplit": 2
       },
       "conditions": {
         "all": [
@@ -184,7 +285,7 @@
           }
         ]
       },
-      "descriptor": "dmma-astream/v2/nn2-w2",
+      "descriptor": "dmma-astream-msplit/v2/nn2-w2-m2",
       "family": "dense",
       "tile": {
         "m": 8,
@@ -193,27 +294,27 @@
       }
     },
     {
-      "template": "dmma-stride-ws",
+      "template": "dmma-steal-ws",
       "block": [
-        160,
+        192,
         1,
         1
       ],
       "width": 1,
       "params": {
-        "nn": 1,
-        "iters": 8
+        "nn": 1
       },
       "warp_map": {
         "compute_start": 0,
         "compute_count": 4,
-        "producer": 4
+        "producer": 4,
+        "stealer": 5
       },
       "conditions": {
         "field": "n",
         "is_not": null
       },
-      "descriptor": "dmma-stride-ws/nn1-w4-i8",
+      "descriptor": "dmma-steal-ws/nn1-w4",
       "family": "dense-ws",
       "tile": {
         "m": 8,
@@ -259,17 +360,18 @@
       }
     },
     {
-      "template": "dmma-asmem",
+      "template": "dmma-astream-msplit",
       "vector_width": 2,
       "block": [
-        128,
+        64,
         1,
         1
       ],
       "width": 1,
       "params": {
-        "nn": 2,
-        "warps": 4
+        "nn": 4,
+        "warps": 1,
+        "msplit": 2
       },
       "conditions": {
         "all": [
@@ -287,7 +389,7 @@
           }
         ]
       },
-      "descriptor": "dmma-asmem/v2/nn2-w4",
+      "descriptor": "dmma-astream-msplit/v2/nn4-w1-m2",
       "family": "dense",
       "tile": {
         "m": 8,
@@ -296,28 +398,66 @@
       }
     },
     {
-      "template": "dmma-stride-ws",
+      "template": "dmma-steal-ws",
       "block": [
-        160,
+        192,
         1,
         1
       ],
       "width": 1,
       "params": {
-        "nn": 2,
-        "iters": 2
+        "nn": 4
       },
       "warp_map": {
         "compute_start": 0,
         "compute_count": 4,
-        "producer": 4
+        "producer": 4,
+        "stealer": 5
       },
       "conditions": {
         "field": "n",
         "is_not": null
       },
-      "descriptor": "dmma-stride-ws/nn2-w4-i2",
+      "descriptor": "dmma-steal-ws/nn4-w4",
       "family": "dense-ws",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      }
+    },
+    {
+      "template": "dmma-astream-msplit",
+      "vector_width": 2,
+      "block": [
+        96,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 4,
+        "warps": 1,
+        "msplit": 3
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream-msplit/v2/nn4-w1-m3",
+      "family": "dense",
       "tile": {
         "m": 8,
         "n": 8,
@@ -328,14 +468,14 @@
       "template": "dmma-astream",
       "vector_width": 2,
       "block": [
-        128,
+        256,
         1,
         1
       ],
       "width": 1,
       "params": {
-        "nn": 1,
-        "warps": 4
+        "nn": 2,
+        "warps": 8
       },
       "conditions": {
         "all": [
@@ -353,37 +493,8 @@
           }
         ]
       },
-      "descriptor": "dmma-astream/v2/nn1-w4",
+      "descriptor": "dmma-astream/v2/nn2-w8",
       "family": "dense",
-      "tile": {
-        "m": 8,
-        "n": 8,
-        "k": 4
-      }
-    },
-    {
-      "template": "dmma-stride-ws",
-      "block": [
-        160,
-        1,
-        1
-      ],
-      "width": 1,
-      "params": {
-        "nn": 2,
-        "iters": 8
-      },
-      "warp_map": {
-        "compute_start": 0,
-        "compute_count": 4,
-        "producer": 4
-      },
-      "conditions": {
-        "field": "n",
-        "is_not": null
-      },
-      "descriptor": "dmma-stride-ws/nn2-w4-i8",
-      "family": "dense-ws",
       "tile": {
         "m": 8,
         "n": 8,

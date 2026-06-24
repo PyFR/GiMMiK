@@ -1,0 +1,222 @@
+{
+  "schema": 1,
+  "cc": [
+    8,
+    0
+  ],
+  "ptx": [
+    7,
+    0
+  ],
+  "kernels": [
+    {
+      "template": "cstream",
+      "family": "sparse",
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 1,
+      "descriptor": "cstream"
+    },
+    {
+      "template": "bstream",
+      "family": "sparse",
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 1,
+      "descriptor": "bstream"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [
+        32,
+        4,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 24
+      },
+      "descriptor": "bstream-msplit/m4-b24-x32"
+    },
+    {
+      "template": "bstream-msplit-v2",
+      "family": "sparse",
+      "block": [
+        32,
+        4,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "bsz": 16
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "eq": "float"
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "bstream-msplit-v2/m4-b16-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [
+        64,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 32
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "beta_zero",
+            "eq": true
+          },
+          {
+            "field": "m",
+            "lte": 320
+          },
+          {
+            "field": "k_used",
+            "gte": 64
+          }
+        ]
+      },
+      "descriptor": "bstream-msplit/m1-b32-x64"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 24
+      },
+      "descriptor": "cstream-ksplit/k2-c24-x32"
+    },
+    {
+      "template": "cstream-ksplit-v2",
+      "family": "sparse",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "csz": 24
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "eq": "float"
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "cstream-ksplit-v2/k2-c24-x32"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [
+        32,
+        4,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 20
+      },
+      "conditions": {
+        "field": "k_used",
+        "gt": 500
+      },
+      "descriptor": "cstream-ksplit/k4-c20-x32"
+    },
+    {
+      "template": "cstream-v2",
+      "family": "sparse",
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 2,
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "eq": "float"
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "k_used",
+            "lte": 100
+          },
+          {
+            "field": "aligne",
+            "is_null_or_divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "cstream-v2/x128"
+    }
+  ]
+}
