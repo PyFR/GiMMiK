@@ -114,4 +114,13 @@ load_c(const ${dtype}* p)
     return nt_load_c(p);
 }
 
+static inline __device__ ${dtype}
+load_b(const ${dtype}* p)
+{
+    // B is read-once (reused only within the block via LDS, never re-read across
+    // blocks), so load it non-temporally to avoid polluting L2 -- the read-side
+    // twin of the non-temporal C store.
+    return nt_load_c(p);
+}
+
 ${next.body()}

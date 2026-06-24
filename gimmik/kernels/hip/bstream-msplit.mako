@@ -3,6 +3,8 @@
 <%
 mx = partition(A, into=msplit, by='rows')
 bchunks = chunk(bix, bsz)
+ntload = context.get('ntload', False)
+bload = (lambda kx: f'load_b(&b[i + {kx}*ldb])') if ntload else (lambda kx: f'b[i + {kx}*ldb]')
 %>
 
 __global__ __launch_bounds__(${blockx*msplit}) void
@@ -34,7 +36,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     {
   % for kx in bchunks[0]:
     % if loop.index % msplit == cid:
-        bsub[0][${loop.index}][threadIdx.x] = b[i + ${kx}*ldb];
+        bsub[0][${loop.index}][threadIdx.x] = ${bload(kx)};
     % endif
   % endfor
     }
@@ -51,7 +53,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % if not loop.parent.last:
       % for kx in bchunks[bb + 1]:
         % if loop.index % msplit == cid:
-        bsub[${(bb + 1) % 2}][${loop.index}][threadIdx.x] = b[i + ${kx}*ldb];
+        bsub[${(bb + 1) % 2}][${loop.index}][threadIdx.x] = ${bload(kx)};
         % endif
       % endfor
     % endif
