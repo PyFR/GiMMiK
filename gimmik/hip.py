@@ -22,7 +22,21 @@ class HIPMatMul(MatMul):
         def emit_preload(name, args, meta):
             yield from emit(name, args | {'preload': True}, meta)
 
-        blkx = self.basemeta['block'][0]
+        ms, bsz, blkx = 4, 24, 64
+        args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
+        meta = {
+            'block': (blkx, ms, 1), 'shared': 2*bsz*blkx*dsize,
+            'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}'
+        }
+        yield from emit('bstream-msplit', args, meta)
+
+        ks, csz, blkx = 2, 24, 64
+        args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
+        meta = {
+            'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize,
+            'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}'
+        }
+        yield from emit('cstream-ksplit', args, meta)
 
         # Tuned HIP variants
         msplits, ksplits = [8, 4], [4, 2]
