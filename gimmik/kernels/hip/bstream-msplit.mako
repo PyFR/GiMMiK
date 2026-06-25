@@ -3,8 +3,6 @@
 <%
 mx = partition(A, into=msplit, by='rows')
 bchunks = chunk(bix, bsz)
-ntload = context.get('ntload', False)
-bload = (lambda kx: f'load_b(&b[i + {kx}*ldb])') if ntload else (lambda kx: f'b[i + {kx}*ldb]')
 %>
 
 __global__ __launch_bounds__(${blockx*msplit}) void
@@ -36,7 +34,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     {
   % for kx in bchunks[0]:
     % if loop.index % msplit == cid:
-        bsub[0][${loop.index}][threadIdx.x] = ${bload(kx)};
+        bsub[0][${loop.index}][threadIdx.x] = load_b(&b[i + ${kx}*ldb]);
     % endif
   % endfor
     }
@@ -53,7 +51,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % if not loop.parent.last:
       % for kx in bchunks[bb + 1]:
         % if loop.index % msplit == cid:
-        bsub[${(bb + 1) % 2}][${loop.index}][threadIdx.x] = ${bload(kx)};
+        bsub[${(bb + 1) % 2}][${loop.index}][threadIdx.x] = load_b(&b[i + ${kx}*ldb]);
         % endif
       % endfor
     % endif
@@ -62,17 +60,17 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         bv = bsub[${bb % 2}][${loop.index}][threadIdx.x];
       % for j, jx in enumerate(A[mcx, kx]):
         % if jx != 0 and kx == afix[mcx[j]]:
-        csub[${j}] = gimmik_vmul(${jx}, bv);
+        csub[${j}] = ${jx}*bv;
         % elif jx != 0:
-        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
+        csub[${j}] += ${jx}*bv;
         % endif
         ## If we're done with this dot product then store to global
         % if kx == alix[mcx[j]] and beta == 0:
         store_c(&c[i + ${mcx[j]}*ldc], csub[${j}]);
         % elif kx == alix[mcx[j]] and beta == 1:
-        store_c(&c[i + ${mcx[j]}*ldc], gimmik_vadd(load_c(&c[i + ${mcx[j]}*ldc]), csub[${j}]));
+        store_c(&c[i + ${mcx[j]}*ldc], load_c(&c[i + ${mcx[j]}*ldc]) + csub[${j}]);
         % elif kx == alix[mcx[j]]:
-        store_c(&c[i + ${mcx[j]}*ldc], gimmik_vadd(csub[${j}], gimmik_vmul(${beta}, load_c(&c[i + ${mcx[j]}*ldc]))));
+        store_c(&c[i + ${mcx[j]}*ldc], csub[${j}] + ${beta}*load_c(&c[i + ${mcx[j]}*ldc]));
         % endif
       % endfor
     % endfor
@@ -82,7 +80,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         % if jx == -1 and j % msplit == cid and beta == 0:
         store_c(&c[i + ${j}*ldc], make_zero());
         % elif jx == -1 and j % msplit == cid and beta != 1:
-        store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc])));
+        store_c(&c[i + ${j}*ldc], ${beta}*load_c(&c[i + ${j}*ldc]));
         % endif
       % endfor
     % endif

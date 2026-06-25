@@ -1,77 +1,34 @@
 % if dtype.endswith('4'):
-static inline __device__ ${dtype} make_zero()
+inline __device__ ${dtype} operator+(${dtype} a, ${dtype} b)
+{ return make_${dtype}(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w); }
+
+inline __device__ ${dtype} operator*(${dtype[:-1]} a, ${dtype} b)
+{ return make_${dtype}(a*b.x, a*b.y, a*b.z, a*b.w); }
+
+inline __device__ void operator+=(${dtype} &a, ${dtype} b)
+{ a.x += b.x; a.y += b.y; a.z += b.z; a.w += b.w; }
+
+inline __device__ ${dtype} make_zero()
 { return make_${dtype}(0, 0, 0, 0); }
 % elif dtype.endswith('2'):
-static inline __device__ ${dtype} make_zero()
+inline __device__ ${dtype} operator+(${dtype} a, ${dtype} b)
+{ return make_${dtype}(a.x + b.x, a.y + b.y); }
+
+inline __device__ ${dtype} operator*(${dtype[:-1]} a, ${dtype} b)
+{ return make_${dtype}(a*b.x, a*b.y); }
+
+inline __device__ void operator+=(${dtype} &a, ${dtype} b)
+{ a.x += b.x; a.y += b.y; }
+
+inline __device__ ${dtype} make_zero()
 { return make_${dtype}(0, 0); }
 % else:
-static inline __device__ ${dtype} make_zero()
+inline __device__ ${dtype} make_zero()
 { return 0; }
 % endif
 
-% if width == 1:
-static inline __device__ ${dtype}
-gimmik_vmul(${dtype} a, ${dtype} b)
-{
-    return a*b;
-}
-
-static inline __device__ ${dtype}
-gimmik_vadd(${dtype} a, ${dtype} b)
-{
-    return a + b;
-}
-
-static inline __device__ ${dtype}
-gimmik_vmadd(${dtype} acc, ${dtype} a, ${dtype} b)
-{
-    // Keep the multiply-add expression visible to the compiler.
-    return acc + a*b;
-}
-% elif width == 2:
-static inline __device__ ${dtype}
-gimmik_vmul(${dtype[:-1]} a, ${dtype} b)
-{
-    return make_${dtype}(a*b.x, a*b.y);
-}
-
-static inline __device__ ${dtype}
-gimmik_vadd(${dtype} a, ${dtype} b)
-{
-    return make_${dtype}(a.x + b.x, a.y + b.y);
-}
-
-static inline __device__ ${dtype}
-gimmik_vmadd(${dtype} acc, ${dtype[:-1]} a, ${dtype} b)
-{
-    // Keep the multiply-add expression visible to the compiler.
-    return make_${dtype}(acc.x + a*b.x, acc.y + a*b.y);
-}
-% elif width == 4:
-static inline __device__ ${dtype}
-gimmik_vmul(${dtype[:-1]} a, ${dtype} b)
-{
-    return make_${dtype}(a*b.x, a*b.y, a*b.z, a*b.w);
-}
-
-static inline __device__ ${dtype}
-gimmik_vadd(${dtype} a, ${dtype} b)
-{
-    return make_${dtype}(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w);
-}
-
-static inline __device__ ${dtype}
-gimmik_vmadd(${dtype} acc, ${dtype[:-1]} a, ${dtype} b)
-{
-    // Keep the multiply-add expression visible to the compiler.
-    return make_${dtype}(acc.x + a*b.x, acc.y + a*b.y, acc.z + a*b.z, acc.w + a*b.w);
-}
-% else:
-#error "HIP vector helpers only support width=2 or width=4"
-% endif
-
 static inline __device__ void
-nt_store_c(${dtype}* p, ${dtype} v)
+nt_store(${dtype}* p, ${dtype} v)
 {
 % if dtype.endswith('4'):
     __builtin_nontemporal_store(v.x, &p->x);
@@ -87,7 +44,7 @@ nt_store_c(${dtype}* p, ${dtype} v)
 }
 
 static inline __device__ ${dtype}
-nt_load_c(const ${dtype}* p)
+nt_load(const ${dtype}* p)
 {
 % if dtype.endswith('4'):
     return make_${dtype}(__builtin_nontemporal_load(&p->x),
@@ -105,22 +62,19 @@ nt_load_c(const ${dtype}* p)
 static inline __device__ void
 store_c(${dtype}* p, ${dtype} v)
 {
-    nt_store_c(p, v);
+    nt_store(p, v);
 }
 
 static inline __device__ ${dtype}
 load_c(const ${dtype}* p)
 {
-    return nt_load_c(p);
+    return nt_load(p);
 }
 
 static inline __device__ ${dtype}
 load_b(const ${dtype}* p)
 {
-    // B is read-once (reused only within the block via LDS, never re-read across
-    // blocks), so load it non-temporally to avoid polluting L2 -- the read-side
-    // twin of the non-temporal C store.
-    return nt_load_c(p);
+    return nt_load(p);
 }
 
 ${next.body()}

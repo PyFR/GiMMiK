@@ -30,9 +30,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
   nzixs = [kx for kx, val in enumerate(jx) if val != 0]
   if nzixs:
       first_kx = nzixs[0]
-      dotex = f"gimmik_vmul({jx[first_kx]}, b[i + {first_kx}*ldb])"
+      dotex = f"{jx[first_kx]}*b[i + {first_kx}*ldb]"
       for kx in nzixs[1:]:
-          dotex = f"gimmik_vmadd({dotex}, {jx[kx]}, b[i + {kx}*ldb])"
+          dotex = f"{dotex} + {jx[kx]}*b[i + {kx}*ldb]"
   else:
       dotex = 'make_zero()'
   %>
@@ -43,9 +43,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
   % if beta == 0:
         store_c(&c[i + ${j}*ldc], dotp);
   % elif beta == 1 and nzixs:
-        store_c(&c[i + ${j}*ldc], gimmik_vadd(load_c(&c[i + ${j}*ldc]), dotp));
+        store_c(&c[i + ${j}*ldc], load_c(&c[i + ${j}*ldc]) + dotp);
   % else:
-        store_c(&c[i + ${j}*ldc], gimmik_vadd(dotp, gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]))));
+        store_c(&c[i + ${j}*ldc], dotp + ${beta}*load_c(&c[i + ${j}*ldc]));
   % endif
 % endfor
     }

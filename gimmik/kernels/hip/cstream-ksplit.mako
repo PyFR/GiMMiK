@@ -47,9 +47,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
       nzixs = [(l_idx, kbx[l_idx]) for l_idx in A[j, kbx].nonzero()[0]]
       if nzixs:
           first_l_idx, first_kx = nzixs[0]
-          dotex = f"gimmik_vmul({A[j, first_kx]}, bv[{first_l_idx}])"
+          dotex = f"{A[j, first_kx]}*bv[{first_l_idx}]"
           for l_idx, kx in nzixs[1:]:
-              dotex = f"gimmik_vmadd({dotex}, {A[j, kx]}, bv[{l_idx}])"
+              dotex = f"{dotex} + {A[j, kx]}*bv[{l_idx}]"
       else:
           dotex = 'make_zero()'
       %>
@@ -75,15 +75,15 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         <%
         sum_expr = f"cv[{loop.index // ksplit}]"
         for s_idx in range(ksplit - 1):
-            sum_expr = f"gimmik_vadd({sum_expr}, csub[{s_idx}][{loop.index}][threadIdx.x])"
+            sum_expr = f"{sum_expr} + csub[{s_idx}][{loop.index}][threadIdx.x]"
         %>
         dotp = ${sum_expr};
         % if beta == 0:
         store_c(&c[i + ${j}*ldc], dotp);
         % elif beta == 1:
-        store_c(&c[i + ${j}*ldc], gimmik_vadd(load_c(&c[i + ${j}*ldc]), dotp));
+        store_c(&c[i + ${j}*ldc], load_c(&c[i + ${j}*ldc]) + dotp);
         % else:
-        store_c(&c[i + ${j}*ldc], gimmik_vadd(dotp, gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]))));
+        store_c(&c[i + ${j}*ldc], dotp + ${beta}*load_c(&c[i + ${j}*ldc]));
         % endif
       % endif
     % endfor

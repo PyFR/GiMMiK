@@ -48,9 +48,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
       has_dotp = A[j].any()
       if nzixs:
           first_l_idx, first_kx = nzixs[0]
-          dotex = f"gimmik_vmul({A[j, first_kx]}, bv[{first_l_idx}])"
+          dotex = f"{A[j, first_kx]}*bv[{first_l_idx}]"
           for l_idx, kx in nzixs[1:]:
-              dotex = f"gimmik_vmadd({dotex}, {A[j, kx]}, bv[{l_idx}])"
+              dotex = f"{dotex} + {A[j, kx]}*bv[{l_idx}]"
       else:
           dotex = 'make_zero()'
       %>
@@ -61,10 +61,10 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         cv[${loop.index // ksplit}] = dotp;
         % elif beta == 1 and has_dotp:
         cv[${loop.index // ksplit}] = load_c(&c[i + ${j}*ldc]);
-        cv[${loop.index // ksplit}] = gimmik_vadd(cv[${loop.index // ksplit}], dotp);
+        cv[${loop.index // ksplit}] += dotp;
         % elif has_dotp:
-        cv[${loop.index // ksplit}] = gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]));
-        cv[${loop.index // ksplit}] = gimmik_vadd(cv[${loop.index // ksplit}], dotp);
+        cv[${loop.index // ksplit}] = ${beta}*load_c(&c[i + ${j}*ldc]);
+        cv[${loop.index // ksplit}] += dotp;
         % endif
       ## Save to shared memory
       % else:
@@ -85,7 +85,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         <%
         sum_expr = f"cv[{loop.index // ksplit}]"
         for s_idx in range(ksplit - 1):
-            sum_expr = f"gimmik_vadd({sum_expr}, csub[{s_idx}][{loop.index}][threadIdx.x])"
+            sum_expr = f"{sum_expr} + csub[{s_idx}][{loop.index}][threadIdx.x]"
         %>
         % if beta == 0:
         dotp = ${sum_expr};
@@ -97,7 +97,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         dotp = ${sum_expr};
         store_c(&c[i + ${j}*ldc], dotp);
         % elif beta != 1:
-        store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc])));
+        store_c(&c[i + ${j}*ldc], ${beta}*load_c(&c[i + ${j}*ldc]));
         % endif
       % endif
     % endfor

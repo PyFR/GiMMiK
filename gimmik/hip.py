@@ -78,13 +78,6 @@ class HIPMatMul(MatMul):
                 } | wmeta
                 yield from emit('bstream-msplit', args, meta)
 
-                # non-temporal B-load variant: B is read-once -> skip L2 alloc
-                nmeta = {
-                    'block': (blkx, ms, 1), 'shared': shared,
-                    'desc': f'bstream-msplit-ntb/{wpfx}m{ms}-b{bsz}-x{blkx}'
-                } | wmeta
-                yield from emit('bstream-msplit', args | {'ntload': True}, nmeta)
-
             for ks in ksplits:
                 # k-split B loading, C streaming kernel
                 args = {'ksplit': ks, 'csz': csz, 'blockx': blkx} | wargs
@@ -118,16 +111,6 @@ class HIPMatMul(MatMul):
                     )
                 } | wmeta
                 yield from emit('bstream-msplit-preload-c', args, meta)
-
-                # non-temporal B-load variant
-                nmeta = {
-                    'block': (blkx, ms, 1), 'shared': shared,
-                    'desc': (
-                        f'bstream-msplit-preload-c-ntb/'
-                        f'{wpfx}m{ms}-b{bsz}-x{blkx}'
-                    )
-                } | wmeta
-                yield from emit('bstream-msplit-preload-c', args | {'ntload': True}, nmeta)
 
             for ks in ksplits:
                 # k-split B loading, C preloading, C streaming kernel

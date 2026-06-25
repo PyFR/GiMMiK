@@ -31,7 +31,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % if beta == 1:
         csub[${j}] = load_c(&c[i + ${j}*ldc]);
     % else:
-        csub[${j}] = gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc]));
+        csub[${j}] = ${beta}*load_c(&c[i + ${j}*ldc]);
     % endif
   % endif
 % endfor
@@ -39,16 +39,16 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 
 ## Iterate through the used rows of B
 % for kx in bix:
-        bv = b[i + ${kx}*ldb];
+        bv = load_b(&b[i + ${kx}*ldb]);
   % for j, jx in enumerate(A[:, kx]):
     % if beta == 0:
       % if jx != 0 and kx == afix[j]:
-        csub[${j}] = gimmik_vmul(${jx}, bv);
+        csub[${j}] = ${jx}*bv;
       % elif jx != 0:
-        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
+        csub[${j}] += ${jx}*bv;
       % endif
     % elif jx != 0:
-        csub[${j}] = gimmik_vmadd(csub[${j}], ${jx}, bv);
+        csub[${j}] += ${jx}*bv;
     % endif
     ##
     % if kx == alix[j]:
@@ -62,7 +62,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
   % if jx == -1 and beta == 0:
         store_c(&c[i + ${j}*ldc], make_zero());
   % elif jx == -1 and beta != 1:
-        store_c(&c[i + ${j}*ldc], gimmik_vmul(${beta}, load_c(&c[i + ${j}*ldc])));
+        store_c(&c[i + ${j}*ldc], ${beta}*load_c(&c[i + ${j}*ldc]));
   % endif
 % endfor
     }
