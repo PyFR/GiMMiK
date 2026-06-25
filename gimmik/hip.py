@@ -60,6 +60,14 @@ class HIPMatMul(MatMul):
                         'desc': f'mfma-dense/m{m_tiles}-k{k_tiles}-s{ms}-x{blkx}'}
                 yield from emit('mfma-dense', args, meta)
 
+            # Software-pipelined (double-buffered B) direct variant: prefetch
+            # next k-tile's B while the current k-tile's MFMAs run.
+            args = {'blockx': blkx, 'a_hex': a_hex, 'm_tiles': m_tiles,
+                    'k_tiles': k_tiles, 'amask': amask}
+            meta = {'block': (blkx, 1, 1), 'shared': 0,
+                    'desc': f'mfma-dense-pipe/m{m_tiles}-k{k_tiles}-x{blkx}'}
+            yield from emit('mfma-dense-pipe', args, meta)
+
         # Only emit tuned variants on architectures they have been validated for.
         base_arch = gcn_arch.split(':', 1)[0] if gcn_arch else None
         if base_arch not in {'gfx90a', 'gfx942'} or warp_size != 64:
