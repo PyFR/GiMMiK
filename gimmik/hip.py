@@ -50,12 +50,15 @@ class HIPMatMul(MatMul):
             blkx = 64
             a_hex, m_tiles, k_tiles, amask = self._mfma_dense_bake()
             k_pad = k_tiles*4
+            bix_rows = sorted(self.bix)          # k-rows A actually uses
+            vec2 = self.aligne is not None and self.aligne % 2 == 0
             for ms in self._mfma_msplits(m_tiles):
                 # msplit goes in block.y (cf. bstream-msplit) so block.x stays
                 # 64 = one wavefront = the cols-per-block grid contract.
                 shared = k_pad*blkx*dsize if ms > 1 else 0
                 args = {'blockx': blkx, 'a_hex': a_hex, 'm_tiles': m_tiles,
-                        'k_tiles': k_tiles, 'amask': amask, 'msplit': ms}
+                        'k_tiles': k_tiles, 'amask': amask, 'msplit': ms,
+                        'bix_rows': bix_rows, 'vec2': vec2}
                 meta = {'block': (blkx, ms, 1), 'shared': shared,
                         'desc': f'mfma-dense/m{m_tiles}-k{k_tiles}-s{ms}-x{blkx}'}
                 yield from emit('mfma-dense', args, meta)

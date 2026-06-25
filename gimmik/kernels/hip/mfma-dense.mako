@@ -28,6 +28,7 @@
                 for w in range(msplit)]
 %>
 typedef ${dtype} gimmik_f64x4 __attribute__((ext_vector_type(4)));
+typedef ${dtype} gimmik_f64x2 __attribute__((ext_vector_type(2)));
 
 __device__ static const ${dtype} ${kname}_Ag[${m_tiles * k_tiles * 64}] = {
     ${', '.join(a_hex)}
@@ -101,15 +102,48 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 
 % else:
     ## ---- m-split path: stage B in LDS once, share across msplit wavefronts ----
-    __shared__ ${dtype} ${kname}_Bs[${k_pad * blockx}];
+    ## Only the k-rows A actually uses (bix_rows) are read from global; holes
+    ## and the padded tail are zeroed (A is 0 there, so an MMA against 0 needs a
+    ## finite -- not NaN -- operand).  The global read is vectorized as f64x2
+    ## when the layout is 2-aligned.
+    __shared__ __align__(16) ${dtype} ${kname}_Bs[${k_pad * blockx}];
     const int tid = threadIdx.y*${blockx} + threadIdx.x;
-    for (int idx = tid; idx < ${k_pad * blockx}; idx += ${blockx * msplit})
+<%
+    rows_read = sorted({kt*4 + r for kt in active_kt for r in range(4)})
+    loaded = set(bix_rows)
+    need_zero = any(r not in loaded for r in rows_read)
+    nb = len(bix_rows)
+    nthreads = blockx * msplit
+    half = blockx // 2
+%>
+% if need_zero:
+    for (int idx = tid; idx < ${k_pad * blockx}; idx += ${nthreads})
+        ${kname}_Bs[idx] = (${dtype})0;
+    __syncthreads();
+% endif
+    static const int ${kname}_brows[${nb}] = { ${', '.join(map(str, bix_rows))} };
+% if vec2:
+    for (int idx = tid; idx < ${nb * half}; idx += ${nthreads})
     {
-        const int krow = idx / ${blockx};
+        const int krow = ${kname}_brows[idx / ${half}];
+        const int cc = (idx % ${half}) * 2;
+        const int col = col_base + cc;
+        if (col + 1 < n)
+            *(gimmik_f64x2*)&${kname}_Bs[krow*${blockx} + cc] =
+                *(const gimmik_f64x2*)&b[krow*ldb + col];
+        else if (col < n)
+            ${kname}_Bs[krow*${blockx} + cc] = b[krow*ldb + col];
+    }
+% else:
+    for (int idx = tid; idx < ${nb * blockx}; idx += ${nthreads})
+    {
+        const int krow = ${kname}_brows[idx / ${blockx}];
         const int cc = idx % ${blockx};
         const int col = col_base + cc;
-        ${kname}_Bs[idx] = (krow < ${k} && col < n) ? b[krow*ldb + col] : (${dtype})0;
+        if (col < n)
+            ${kname}_Bs[krow*${blockx} + cc] = b[krow*ldb + col];
     }
+% endif
     __syncthreads();
 
 % for w in range(msplit):
