@@ -164,12 +164,14 @@ class HIPMatMul(MatMul):
         return base in {'gfx940', 'gfx941', 'gfx942'}
 
     def _mfma_dense_ok(self, dsize):
-        # f64 Matrix-Core only; the densified path is only worthwhile when A is
-        # reasonably dense, and is bounded so the baked A array stays small.
-        if dsize != 8 or self.m > 128 or self.k > 128:
-            return False
-        density = np.count_nonzero(self.A) / self.A.size
-        return density >= 0.5
+        # f64 Matrix Cores only (that is the only hard requirement of the
+        # mfma_f64_16x16x4 instruction).  The kernel densifies A and is left
+        # for the autotuner to accept or reject on speed; the earlier
+        # m,k <= 128 and density >= 0.5 gates were too strict and hid it from
+        # real PyFR tet operators.  Large m increases register pressure (each
+        # wavefront keeps m_tiles*4 v4f64 accumulators live) -> m-splitting is
+        # the natural follow-up if that becomes the bottleneck.
+        return dsize == 8
 
     def _mfma_dense_bake(self):
         # Densify, pad and reorder A into v_mfma_f64_16x16x4 fragment order:
