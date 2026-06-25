@@ -1,6 +1,3 @@
-import json
-import pkgutil
-
 import numpy as np
 
 from gimmik.base import MatMul
@@ -19,13 +16,8 @@ class PTXMatMul(MatMul):
     PTX_SM = {(8, 0): (7, 0), (9, 0): (8, 6), (10, 0): (8, 7), (10, 3): (8, 7),
               (12, 0): (8, 7), (12, 1): (8, 7)}
 
-    DEFAULT_CFG = 'kernels/ptx/config/default.json'
     FZERO = {'float': '0f00000000', 'double': '0d0000000000000000'}
     PFTYPE = {'float': 'f32', 'double': 'f64'}
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._config_cache = {}
 
     @classmethod
     def is_sparse_suitable(cls, arr, cc):
@@ -49,7 +41,10 @@ class PTXMatMul(MatMul):
                            smem_info=None):
         cc = compute_capability or (0, 0)
         smem_info = smem_info or (48*1024, 48*1024)
-        config = self._cc_config(cc, dtype)
+        config = self._platform_config(dtype, cc)
+
+        # When we know the PTX version but there isn't an SM specific config,
+        # we can overide the default PTX version
         if cc in self.PTX_SM:
             target_cc = cc
             ptx = self.PTX_SM[cc]
@@ -134,49 +129,37 @@ class PTXMatMul(MatMul):
         args |= {'has_zero_rows': bool(self.has_zero_rows),
                  'row_nz': [[(kx, self.A[j, kx]) for kx in range(self.k)
                      if self.A[j, kx] != 0] for j in range(self.m)],
+                 'preload_c': bool(params.get('preload_c', False)),
                 }
 
         match tpl:
             case 'cstream' | 'bstream':
                 pass
-            case 'bstream-msplit':
-                msplit = block[1]
+            case 'bstream-msplit' | 'bstream-msplit-v2':
                 bsz = params['bsz']
-                args |= {'msplit': msplit, 'bsz': bsz, 'blockx': blockx}
-                meta['shared'] = 2*bsz*blockx*dsize
-            case 'bstream-msplit-v2':
-                msplit = block[1]
-                bsz = params['bsz']
-                args |= {'msplit': msplit, 'bsz': bsz, 'blockx': blockx}
-                meta['shared'] = 2*bsz*blockx*2*dsize
-            case 'cstream-ksplit':
-                ksplit = block[1]
+                args |= {'msplit': block[1], 'bsz': bsz, 'blockx': blockx}
+                meta['shared'] = 2*bsz*blockx*dsize*args['width']
+            case 'cstream-ksplit' | 'cstream-ksplit-v2':
                 csz = params['csz']
-                args |= {'ksplit': ksplit, 'csz': csz, 'blockx': blockx}
-                meta['shared'] = (ksplit - 1)*csz*blockx*dsize
-            case 'cstream-ksplit-v2':
-                ksplit = block[1]
-                csz = params['csz']
-                args |= {'ksplit': ksplit, 'csz': csz, 'blockx': blockx}
-                meta['shared'] = (ksplit - 1)*csz*blockx*2*dsize
+                args |= {'ksplit': block[1], 'csz': csz, 'blockx': blockx}
+                meta['shared'] = (block[1] - 1)*csz*blockx*dsize*args['width']
             case _:
                 args['blockx'] = blockx
         return tpl, args, meta
 
     def _dense_args(self, kernel_cfg, params, cc, smem_info, args, meta):
-        base_tpl = kernel_cfg['template']
+        tpl = kernel_cfg['template']
         nn = params['nn']
         warps = params['warps']
         tile = kernel_cfg['tile']
-        vector_width = kernel_cfg['vector_width']
+        width = kernel_cfg['width']
 
-        setup = self._dense_common(nn, warps, tile, cc, vector_width)
+        setup = self._dense_common(nn, warps, tile, cc, width)
         if setup is None:
             return None
 
-        tpl = f'{base_tpl}-v{vector_width}'
         args |= setup
-        if base_tpl == 'dmma-asmem':
+        if tpl.startswith('dmma-asmem'):
             args |= {
                 'a_copy_threads': 32 * warps,
                 'block_stealing': bool(params.get('block_stealing', False)),
@@ -212,7 +195,7 @@ class PTXMatMul(MatMul):
 
         return tpl, args, meta
 
-    def _dense_common(self, nn, warps_per_cta, tile, cc, vector_width=None):
+    def _dense_common(self, nn, warps_per_cta, tile, cc, width=None):
         tile_m, tile_n, tile_k = tile['m'], tile['n'], tile['k']
         ptx_shape = f'm{tile_m}n{tile_n}k{tile_k}'
 
@@ -231,7 +214,7 @@ class PTXMatMul(MatMul):
         if n_per_cta > self.n:
             return None
 
-        if (vector_width == 2
+        if (width == 2
                 and (self.aligne is None or self.aligne % 2
                      or self.n % n_per_warp)):
             return None
@@ -372,41 +355,10 @@ class PTXMatMul(MatMul):
             stats = self._matmul_stats(dtype, cc, smem_info)
             return self._eval_condition(condition, stats)
 
-    @staticmethod
-    def _dtype_config_suffix(dtype):
-        if dtype is None:
-            raise ValueError('PTX config dtype is required')
-
-        dtype_name = getattr(dtype, 'name', dtype)
-        if dtype_name in {'float', 'float32', 'single'}:
-            return 'fp32'
-        elif dtype_name in {'double', 'float64'}:
-            return 'fp64'
-
-        raise ValueError(f'Unsupported PTX config dtype {dtype_name!r}')
-
-    def _cc_config(self, cc, dtype):
+    def _platform_config(self, dtype, cc):
         cc = cc or (0, 0)
-        suffix = self._dtype_config_suffix(dtype)
-        key = (cc, suffix)
-        if key not in self._config_cache:
-            base = f'kernels/ptx/config/sm{cc[0]}{cc[1]}'
-            paths = [f'{base}_{suffix}.json', self.DEFAULT_CFG]
-
-            cfgdir = None
-            for path in paths:
-                try:
-                    cfgdir = pkgutil.get_data('gimmik', path)
-                except FileNotFoundError:
-                    continue
-
-                if cfgdir is not None:
-                    break
-
-            cfg = json.loads(cfgdir.decode('utf-8'))
-
-            self._config_cache[key] = cfg
-        return self._config_cache[key]
+        key = f'sm{cc[0]}{cc[1]}_{dtype}'
+        return self._get_config(key)
 
     def _matmul_stats(self, dtype, cc, smem_info):
         nnz = np.count_nonzero(self.A)
@@ -426,44 +378,6 @@ class PTXMatMul(MatMul):
             'smem_static': smem_info[0],
             'smem_dynamic': smem_info[1],
         }
-
-    def _eval_condition(self, condition, stats):
-        if 'all' in condition:
-            return all(self._eval_condition(c, stats) for c in condition['all'])
-        if 'any' in condition:
-            return any(self._eval_condition(c, stats) for c in condition['any'])
-        if 'not' in condition:
-            return not self._eval_condition(condition['not'], stats)
-
-        value = stats[condition['field']]
-        op = next(k for k in condition if k != 'field')
-        expected = condition[op]
-
-        match op:
-            case 'eq':
-                return value == expected
-            case 'ne':
-                return value != expected
-            case 'lt':
-                return value is not None and value < expected
-            case 'lte':
-                return value is not None and value <= expected
-            case 'gt':
-                return value is not None and value > expected
-            case 'gte':
-                return value is not None and value >= expected
-            case 'in':
-                return value in expected
-            case 'is_null':
-                return value is None
-            case 'is_not':
-                return value is not None
-            case 'divisible_by':
-                return value is not None and value % expected == 0
-            case 'is_null_or_divisible_by':
-                return (value is None or value % expected == 0)
-            case _:
-                raise ValueError(f'op `{op}` not supported')
 
     @staticmethod
     def _dsmem_alloc(regions, mbars, align=16):

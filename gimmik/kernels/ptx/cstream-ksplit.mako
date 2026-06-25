@@ -76,6 +76,7 @@ csub_bytes = (ksplit - 1) * csz * blockx * dwidth_i
 ## Chunk ${cchunk_i}: partial dot-product
 %   for row_idx, j in enumerate(cchunk):
 <%      owner_bid = row_idx % ksplit %>
+<%      has_dotp = bool(A[j].any()) %>
 %    for kxi, kx in enumerate(kbx):
 %     if A[j, kx] != 0 and kx not in loaded:
 %      if n is None:
@@ -97,7 +98,20 @@ csub_bytes = (ksplit - 1) * csz * blockx * dwidth_i
 %     endif
 %    endfor
 %    if owner_bid == bid:
+%     if beta_zero or not preload_c:
     mov.${pftype} cv${row_idx // ksplit}, dotp;
+%     elif has_dotp:
+%      if n is None:
+    {
+        .reg .u64 _cptr;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
+        ld.weak.global.cg.${pftype} cv${row_idx // ksplit}, [_cptr];
+    }
+%      else:
+    ld.weak.global.cg.${pftype} cv${row_idx // ksplit}, [c_base + ${ldc*j*dwidth_i}];
+%      endif
+    fma.rn.${pftype} cv${row_idx // ksplit}, cv${row_idx // ksplit}, ${float(beta)}, dotp;
+%     endif
 %    else:
 <%        csub_idx = bid - (1 if bid > owner_bid else 0) %>
     st.shared.${pftype} [csub_thread + ${(csub_idx * csz + row_idx) * blockx * dwidth_i}], dotp;
@@ -108,6 +122,8 @@ csub_bytes = (ksplit - 1) * csz * blockx * dwidth_i
 ## Combine phase (owned rows only)
 %   for row_idx, j in enumerate(cchunk):
 %    if row_idx % ksplit == bid:
+<%      has_dotp = bool(A[j].any()) %>
+%     if not preload_c or beta_zero or has_dotp:
     mov.${pftype} dotp, cv${row_idx // ksplit};
 %     for other_bid in range(ksplit):
 %      if other_bid != bid:
@@ -119,6 +135,7 @@ csub_bytes = (ksplit - 1) * csz * blockx * dwidth_i
     }
 %      endif
 %     endfor
+%     endif
 %     if beta_zero:
 %      if n is None:
     {
@@ -129,6 +146,31 @@ csub_bytes = (ksplit - 1) * csz * blockx * dwidth_i
 %      else:
     st.weak.global.cg.${pftype} [c_base + ${ldc*j*dwidth_i}], dotp;
 %      endif
+%     elif preload_c and has_dotp:
+%      if n is None:
+    {
+        .reg .u64 _cptr;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
+        st.weak.global.${pftype} [_cptr], dotp;
+    }
+%      else:
+    st.weak.global.${pftype} [c_base + ${ldc*j*dwidth_i}], dotp;
+%      endif
+%     elif preload_c and beta != 1:
+    {
+        .reg .${pftype} _ctmp;
+%      if n is None:
+        .reg .u64 _cptr;
+        mad.wide.u32 _cptr, ldc, ${j * dwidth_i}, c_base;
+        ld.weak.global.cg.${pftype} _ctmp, [_cptr];
+        mul.${pftype} _ctmp, _ctmp, ${float(beta)};
+        st.weak.global.${pftype} [_cptr], _ctmp;
+%      else:
+        ld.weak.global.cg.${pftype} _ctmp, [c_base + ${ldc*j*dwidth_i}];
+        mul.${pftype} _ctmp, _ctmp, ${float(beta)};
+        st.weak.global.${pftype} [c_base + ${ldc*j*dwidth_i}], _ctmp;
+%      endif
+    }
 %     else:
     {
         .reg .${pftype} _ctmp;

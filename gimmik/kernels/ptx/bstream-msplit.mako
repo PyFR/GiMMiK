@@ -81,12 +81,30 @@ def bsub_off(buf, idx):
     setp.ne.u32 p_skip, tid_y, ${cid};
     @p_skip bra $L_END_CID_${cid};
 
+% if beta_zero or not preload_c:
 ## Zero accumulators
 %  for j, row_j in enumerate(mcx):
 %   if afix[row_j] != -1:
     mov.${pftype} csub${j}, ${fzero};
 %   endif
 %  endfor
+% else:
+## Pre-load C and scale by beta so per-row completion is a plain store
+%  for j, row_j in enumerate(mcx):
+%   if afix[row_j] != -1:
+%    if n is None:
+    {
+        .reg .u64 _cptr;
+        mad.wide.u32 _cptr, ldc, ${row_j * dwidth_i}, c_base;
+        ld.weak.global.cg.${pftype} csub${j}, [_cptr];
+    }
+%    else:
+    ld.weak.global.cg.${pftype} csub${j}, [c_base + ${ldc*row_j*dwidth_i}];
+%    endif
+    mul.${pftype} csub${j}, csub${j}, ${float(beta)};
+%   endif
+%  endfor
+% endif
 
 ## Pre-fill double buffer
 %  if use_cpasync:
@@ -180,6 +198,16 @@ def bsub_off(buf, idx):
     }
 %       else:
     st.weak.global.cg.${pftype} [c_base + ${ldc*row_j*dwidth_i}], csub${j};
+%       endif
+%      elif preload_c:
+%       if n is None:
+    {
+        .reg .u64 _cptr;
+        mad.wide.u32 _cptr, ldc, ${row_j * dwidth_i}, c_base;
+        st.weak.global.${pftype} [_cptr], csub${j};
+    }
+%       else:
+    st.weak.global.${pftype} [c_base + ${ldc*row_j*dwidth_i}], csub${j};
 %       endif
 %      else:
     {

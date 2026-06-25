@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import itertools as it
+import json
 import pkgutil
 import re
 
@@ -90,6 +91,9 @@ class MatMul:
         self.bix = np.nonzero(np.any(A != 0, axis=0))[0]
         self.bix = {kx: k for k, kx in enumerate(self.bix)}
 
+        # Create config cache
+        self._config_cache = {}
+
     def kernels(self, dtype, kname='gimmik_mm', **kwargs):
         basemeta = self.basemeta
 
@@ -141,6 +145,56 @@ class MatMul:
 
     def _process_meta(self, meta):
         pass
+
+    def _get_config(self, key):
+        if key not in self._config_cache:
+            cfgdir = f'kernels/{self.platform}/config'
+            path = f'{cfgdir}/{key}.json'
+            default_path = f'{cfgdir}/default.json'
+            try:
+                cfgdata = pkgutil.get_data('gimmik', path)
+            except FileNotFoundError:
+                cfgdata = pkgutil.get_data('gimmik', default_path)
+            self._config_cache[key] = json.loads(cfgdata.decode('utf-8'))
+        return self._config_cache[key]
+
+    def _eval_condition(self, condition, stats):
+        if 'all' in condition:
+            return all(self._eval_condition(c, stats) for c in condition['all'])
+        if 'any' in condition:
+            return any(self._eval_condition(c, stats) for c in condition['any'])
+        if 'not' in condition:
+            return not self._eval_condition(condition['not'], stats)
+
+        value = stats[condition['field']]
+        op = next(k for k in condition if k != 'field')
+        expected = condition[op]
+
+        match op:
+            case 'eq':
+                return value == expected
+            case 'ne':
+                return value != expected
+            case 'lt':
+                return value is not None and value < expected
+            case 'lte':
+                return value is not None and value <= expected
+            case 'gt':
+                return value is not None and value > expected
+            case 'gte':
+                return value is not None and value >= expected
+            case 'in':
+                return value in expected
+            case 'is_null':
+                return value is None
+            case 'is_not':
+                return value is not None
+            case 'divisible_by':
+                return value is not None and value % expected == 0
+            case 'is_null_or_divisible_by':
+                return (value is None or value % expected == 0)
+            case _:
+                raise ValueError(f'op `{op}` not supported')
 
     def _render_kernel(self, dtype, tplname, tplargs):
         tpl = _PlatformTemplateLookup(self.platform).get_template(tplname)

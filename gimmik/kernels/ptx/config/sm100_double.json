@@ -1,0 +1,424 @@
+{
+  "schema": 1,
+  "cc": [
+    10,
+    0
+  ],
+  "ptx": [
+    8,
+    7
+  ],
+  "kernels": [
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 20,
+        "preload_c": true
+      },
+      "descriptor": "cstream-ksplit/preload-c/k2-c20-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 32,
+        "preload_c": true
+      },
+      "descriptor": "bstream-msplit/preload-c/m2-b32-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [
+        32,
+        4,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 32,
+        "preload_c": true
+      },
+      "descriptor": "bstream-msplit/preload-c/m4-b32-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [
+        32,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "bsz": 32
+      },
+      "descriptor": "bstream-msplit/m1-b32-x32"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 16,
+        "preload_c": true
+      },
+      "descriptor": "cstream-ksplit/preload-c/k2-c16-x32"
+    },
+    {
+      "template": "cstream-ksplit-v2",
+      "family": "sparse",
+      "block": [
+        64,
+        2,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "csz": 32,
+        "preload_c": true
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "in": [
+              "double"
+            ]
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "cstream-ksplit-v2/preload-c/k2-c32-x64"
+    },
+    {
+      "template": "cstream",
+      "family": "sparse",
+      "block": [
+        256,
+        1,
+        1
+      ],
+      "width": 1,
+      "descriptor": "cstream/x256"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [
+        32,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 32,
+        "preload_c": true
+      },
+      "descriptor": "cstream-ksplit/preload-c/k2-c32-x32"
+    },
+    {
+      "template": "dmma-steal-ws",
+      "family": "dense-ws",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      },
+      "block": [
+        192,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 2
+      },
+      "warp_map": {
+        "compute_start": 0,
+        "compute_count": 4,
+        "producer": 4,
+        "stealer": 5
+      },
+      "conditions": {
+        "field": "n",
+        "is_not": null
+      },
+      "descriptor": "dmma-steal-ws/nn2-w4"
+    },
+    {
+      "template": "dmma-astream-msplit-v2",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      },
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "nn": 2,
+        "warps": 2,
+        "msplit": 2
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream-msplit/v2/nn2-w2-m2"
+    },
+    {
+      "template": "dmma-steal-ws",
+      "family": "dense-ws",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      },
+      "block": [
+        192,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 1
+      },
+      "warp_map": {
+        "compute_start": 0,
+        "compute_count": 4,
+        "producer": 4,
+        "stealer": 5
+      },
+      "conditions": {
+        "field": "n",
+        "is_not": null
+      },
+      "descriptor": "dmma-steal-ws/nn1-w4"
+    },
+    {
+      "template": "dmma-astream-v2",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      },
+      "block": [
+        32,
+        1,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "nn": 4,
+        "warps": 1
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream/v2/nn4-w1"
+    },
+    {
+      "template": "dmma-astream-msplit-v2",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      },
+      "block": [
+        64,
+        1,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "nn": 4,
+        "warps": 1,
+        "msplit": 2
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream-msplit/v2/nn4-w1-m2"
+    },
+    {
+      "template": "dmma-steal-ws",
+      "family": "dense-ws",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      },
+      "block": [
+        192,
+        1,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "nn": 4
+      },
+      "warp_map": {
+        "compute_start": 0,
+        "compute_count": 4,
+        "producer": 4,
+        "stealer": 5
+      },
+      "conditions": {
+        "field": "n",
+        "is_not": null
+      },
+      "descriptor": "dmma-steal-ws/nn4-w4"
+    },
+    {
+      "template": "dmma-astream-msplit-v2",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      },
+      "block": [
+        96,
+        1,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "nn": 4,
+        "warps": 1,
+        "msplit": 3
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream-msplit/v2/nn4-w1-m3"
+    },
+    {
+      "template": "dmma-astream-v2",
+      "family": "dense",
+      "tile": {
+        "m": 8,
+        "n": 8,
+        "k": 4
+      },
+      "block": [
+        256,
+        1,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "nn": 2,
+        "warps": 8
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "dmma-astream/v2/nn2-w8"
+    }
+  ]
+}

@@ -10,7 +10,63 @@
   ],
   "kernels": [
     {
-      "template": "bstream",
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [
+        64,
+        2,
+        1
+      ],
+      "width": 1,
+      "params": {
+        "csz": 32,
+        "preload_c": true
+      },
+      "descriptor": "cstream-ksplit/preload-c/k2-c32-x64"
+    },
+    {
+      "template": "cstream-ksplit-v2",
+      "family": "sparse",
+      "block": [
+        64,
+        2,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "csz": 16,
+        "preload_c": true
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "in": [
+              "float"
+            ]
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "cstream-ksplit-v2/preload-c/k2-c16-x64"
+    },
+    {
+      "template": "cstream",
       "family": "sparse",
       "block": [
         128,
@@ -18,7 +74,100 @@
         1
       ],
       "width": 1,
-      "descriptor": "bstream/x128"
+      "descriptor": "cstream/x128"
+    },
+    {
+      "template": "cstream-ksplit-v2",
+      "family": "sparse",
+      "block": [
+        64,
+        2,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "csz": 24,
+        "preload_c": true
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "in": [
+              "float"
+            ]
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "cstream-ksplit-v2/preload-c/k2-c24-x64"
+    },
+    {
+      "template": "bstream",
+      "family": "sparse",
+      "block": [
+        256,
+        1,
+        1
+      ],
+      "width": 1,
+      "descriptor": "bstream/x256"
+    },
+    {
+      "template": "bstream-msplit-v2",
+      "family": "sparse",
+      "block": [
+        64,
+        2,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "bsz": 32,
+        "preload_c": true
+      },
+      "conditions": {
+        "all": [
+          {
+            "field": "dtype",
+            "in": [
+              "float"
+            ]
+          },
+          {
+            "field": "n",
+            "is_not": null
+          },
+          {
+            "field": "n",
+            "divisible_by": 2
+          },
+          {
+            "field": "aligne",
+            "is_not": null
+          },
+          {
+            "field": "aligne",
+            "divisible_by": 2
+          }
+        ]
+      },
+      "descriptor": "bstream-msplit-v2/preload-c/m2-b32-x64"
     },
     {
       "template": "cstream-ksplit",
@@ -30,60 +179,10 @@
       ],
       "width": 1,
       "params": {
-        "csz": 24
+        "csz": 24,
+        "preload_c": true
       },
-      "descriptor": "cstream-ksplit/k2-c24-x64"
-    },
-    {
-      "template": "cstream-ksplit-v2",
-      "family": "sparse",
-      "block": [
-        32,
-        4,
-        1
-      ],
-      "width": 2,
-      "params": {
-        "csz": 20
-      },
-      "conditions": {
-        "all": [
-          {
-            "field": "dtype",
-            "in": [
-              "float"
-            ]
-          },
-          {
-            "field": "n",
-            "is_not": null
-          },
-          {
-            "field": "n",
-            "divisible_by": 2
-          },
-          {
-            "field": "aligne",
-            "is_not": null
-          },
-          {
-            "field": "aligne",
-            "divisible_by": 2
-          }
-        ]
-      },
-      "descriptor": "cstream-ksplit-v2/k4-c20-x32"
-    },
-    {
-      "template": "cstream",
-      "family": "sparse",
-      "block": [
-        256,
-        1,
-        1
-      ],
-      "width": 1,
-      "descriptor": "cstream/x256"
+      "descriptor": "cstream-ksplit/preload-c/k2-c24-x64"
     },
     {
       "template": "cstream-ksplit-v2",
@@ -95,7 +194,8 @@
       ],
       "width": 2,
       "params": {
-        "csz": 16
+        "csz": 32,
+        "preload_c": true
       },
       "conditions": {
         "all": [
@@ -123,127 +223,7 @@
           }
         ]
       },
-      "descriptor": "cstream-ksplit-v2/k2-c16-x64"
-    },
-    {
-      "template": "bstream-msplit-v2",
-      "family": "sparse",
-      "block": [
-        64,
-        1,
-        1
-      ],
-      "width": 2,
-      "params": {
-        "bsz": 32
-      },
-      "conditions": {
-        "all": [
-          {
-            "field": "dtype",
-            "in": [
-              "float"
-            ]
-          },
-          {
-            "field": "n",
-            "is_not": null
-          },
-          {
-            "field": "n",
-            "divisible_by": 2
-          },
-          {
-            "field": "aligne",
-            "is_not": null
-          },
-          {
-            "field": "aligne",
-            "divisible_by": 2
-          }
-        ]
-      },
-      "descriptor": "bstream-msplit-v2/m1-b32-x64"
-    },
-    {
-      "template": "cstream-ksplit-v2",
-      "family": "sparse",
-      "block": [
-        64,
-        4,
-        1
-      ],
-      "width": 2,
-      "params": {
-        "csz": 24
-      },
-      "conditions": {
-        "all": [
-          {
-            "field": "dtype",
-            "in": [
-              "float"
-            ]
-          },
-          {
-            "field": "n",
-            "is_not": null
-          },
-          {
-            "field": "n",
-            "divisible_by": 2
-          },
-          {
-            "field": "aligne",
-            "is_not": null
-          },
-          {
-            "field": "aligne",
-            "divisible_by": 2
-          }
-        ]
-      },
-      "descriptor": "cstream-ksplit-v2/k4-c24-x64"
-    },
-    {
-      "template": "cstream-ksplit-v2",
-      "family": "sparse",
-      "block": [
-        64,
-        2,
-        1
-      ],
-      "width": 2,
-      "params": {
-        "csz": 32
-      },
-      "conditions": {
-        "all": [
-          {
-            "field": "dtype",
-            "in": [
-              "float"
-            ]
-          },
-          {
-            "field": "n",
-            "is_not": null
-          },
-          {
-            "field": "n",
-            "divisible_by": 2
-          },
-          {
-            "field": "aligne",
-            "is_not": null
-          },
-          {
-            "field": "aligne",
-            "divisible_by": 2
-          }
-        ]
-      },
-      "descriptor": "cstream-ksplit-v2/k2-c32-x64"
+      "descriptor": "cstream-ksplit-v2/preload-c/k2-c32-x64"
     }
   ]
 }

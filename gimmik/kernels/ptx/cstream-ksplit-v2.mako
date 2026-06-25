@@ -62,6 +62,7 @@ csub_bytes = (ksplit - 1) * csz * blockx * 2 * dwidth_i
 ## Chunk ${cchunk_i}: partial dot-product
 %   for row_idx, j in enumerate(cchunk):
 <%      owner_bid = row_idx % ksplit %>
+<%      has_dotp = bool(A[j].any()) %>
 %    for kxi, kx in enumerate(kbx):
 %     if A[j, kx] != 0 and kx not in loaded:
     ld.weak.global.cg.v2.${pftype} {bv_a${kxi}, bv_b${kxi}}, [b_base + ${ldb*kx*dwidth_i}];
@@ -77,8 +78,14 @@ csub_bytes = (ksplit - 1) * csz * blockx * 2 * dwidth_i
 %     endif
 %    endfor
 %    if owner_bid == bid:
+%     if beta_zero or not preload_c:
     mov.${pftype} cv_a${row_idx // ksplit}, dotp_a;
     mov.${pftype} cv_b${row_idx // ksplit}, dotp_b;
+%     elif has_dotp:
+    ld.weak.global.cg.v2.${pftype} {cv_a${row_idx // ksplit}, cv_b${row_idx // ksplit}}, [c_base + ${ldc*j*dwidth_i}];
+    fma.rn.${pftype} cv_a${row_idx // ksplit}, cv_a${row_idx // ksplit}, ${float(beta)}, dotp_a;
+    fma.rn.${pftype} cv_b${row_idx // ksplit}, cv_b${row_idx // ksplit}, ${float(beta)}, dotp_b;
+%     endif
 %    else:
 <%        csub_idx = bid - (1 if bid > owner_bid else 0) %>
     st.shared.v2.${pftype} [csub_thread + ${(csub_idx * csz + row_idx) * blockx * 2 * dwidth_i}], {dotp_a, dotp_b};
@@ -89,6 +96,8 @@ csub_bytes = (ksplit - 1) * csz * blockx * 2 * dwidth_i
 ## Combine phase (owned rows only)
 %   for row_idx, j in enumerate(cchunk):
 %    if row_idx % ksplit == bid:
+<%      has_dotp = bool(A[j].any()) %>
+%     if not preload_c or beta_zero or has_dotp:
     mov.${pftype} dotp_a, cv_a${row_idx // ksplit};
     mov.${pftype} dotp_b, cv_b${row_idx // ksplit};
 %     for other_bid in range(ksplit):
@@ -102,8 +111,19 @@ csub_bytes = (ksplit - 1) * csz * blockx * 2 * dwidth_i
     }
 %      endif
 %     endfor
+%     endif
 %     if beta_zero:
     st.weak.global.cg.v2.${pftype} [c_base + ${ldc*j*dwidth_i}], {dotp_a, dotp_b};
+%     elif preload_c and has_dotp:
+    st.weak.global.v2.${pftype} [c_base + ${ldc*j*dwidth_i}], {dotp_a, dotp_b};
+%     elif preload_c and beta != 1:
+    {
+        .reg .${pftype} _ca, _cb;
+        ld.weak.global.cg.v2.${pftype} {_ca, _cb}, [c_base + ${ldc*j*dwidth_i}];
+        mul.${pftype} _ca, _ca, ${float(beta)};
+        mul.${pftype} _cb, _cb, ${float(beta)};
+        st.weak.global.v2.${pftype} [c_base + ${ldc*j*dwidth_i}], {_ca, _cb};
+    }
 %     else:
     {
         .reg .${pftype} _ca, _cb;
