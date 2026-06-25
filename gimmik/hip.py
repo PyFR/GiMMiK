@@ -48,12 +48,17 @@ class HIPMatMul(MatMul):
         # the MFMA intrinsic is CDNA3-only (gfx94x).
         if self._is_cdna3(gcn_arch) and self._mfma_dense_ok(dsize):
             blkx = 64
-            a_hex, m_tiles, k_tiles = self._mfma_dense_bake()
-            args = {'blockx': blkx, 'a_hex': a_hex,
-                    'm_tiles': m_tiles, 'k_tiles': k_tiles}
-            meta = {'block': (blkx, 1, 1),
-                    'desc': f'mfma-dense/m{m_tiles}-k{k_tiles}-x{blkx}'}
-            yield from emit('mfma-dense', args, meta)
+            a_hex, m_tiles, k_tiles, amask = self._mfma_dense_bake()
+            k_pad = k_tiles*4
+            for ms in self._mfma_msplits(m_tiles):
+                # msplit goes in block.y (cf. bstream-msplit) so block.x stays
+                # 64 = one wavefront = the cols-per-block grid contract.
+                shared = k_pad*blkx*dsize if ms > 1 else 0
+                args = {'blockx': blkx, 'a_hex': a_hex, 'm_tiles': m_tiles,
+                        'k_tiles': k_tiles, 'amask': amask, 'msplit': ms}
+                meta = {'block': (blkx, ms, 1), 'shared': shared,
+                        'desc': f'mfma-dense/m{m_tiles}-k{k_tiles}-s{ms}-x{blkx}'}
+                yield from emit('mfma-dense', args, meta)
 
         # Only emit tuned variants on architectures they have been validated for.
         base_arch = gcn_arch.split(':', 1)[0] if gcn_arch else None
@@ -173,11 +178,22 @@ class HIPMatMul(MatMul):
         # the natural follow-up if that becomes the bottleneck.
         return dsize == 8
 
+    def _mfma_msplits(self, m_tiles):
+        # m-split factors to offer (placed in block.y).  Each wavefront keeps
+        # m_tiles/msplit * 4 v4f64 accumulators live, so splitting m lowers
+        # register pressure / raises occupancy on large-m operators.  msplit=1
+        # is the direct (no-LDS) path; msplit>1 stages B once in LDS and shares
+        # it across the block (so B is not re-read per wavefront).
+        return [ms for ms in (1, 2, 4) if ms == 1 or ms <= m_tiles]
+
     def _mfma_dense_bake(self):
         # Densify, pad and reorder A into v_mfma_f64_16x16x4 fragment order:
         #   Ag[(mt*k_tiles + kt)*64 + lane]
         #       = A_pad[mt*16 + lane%16][kt*4 + lane//16]
         # i.e. with lane = g*16 + p, operand A wants i = p, kk = g.
+        # amask[mt][kt] flags 16x4 A-tiles that contain a non-zero, so the
+        # kernel can skip the MMA (and, on the direct path, the B load) for
+        # all-zero tiles -- structural zero-tile skipping.
         m, k = self.A.shape
         m_tiles = -(-m // 16)
         k_tiles = -(-k // 4)
@@ -190,7 +206,9 @@ class HIPMatMul(MatMul):
                     i = mt*16 + (lane % 16)
                     kk = kt*4 + (lane // 16)
                     a_hex.append(float(a_pad[i, kk]).hex())
-        return a_hex, m_tiles, k_tiles
+        amask = [[bool(np.any(a_pad[mt*16:mt*16+16, kt*4:kt*4+4]))
+                  for kt in range(k_tiles)] for mt in range(m_tiles)]
+        return a_hex, m_tiles, k_tiles, amask
 
     def _process_meta(self, meta):
         if self.n is not None:
