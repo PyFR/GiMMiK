@@ -50,6 +50,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     const int col_base = ${blockx}*blockIdx.x;
 
     ${dtype} a;
+% for t in range(tiles):
+    ${dtype} bv_${t};
+% endfor
 % for mt in range(m_tiles):
 %  for t in range(tiles):
     gimmik_f64x4 acc_${mt}_${t} = {0.0, 0.0, 0.0, 0.0};
@@ -61,7 +64,6 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     krow_guard = (kt + 1)*4 > k
 %>
 %  for t in range(tiles):
-    ${dtype} bv_${t};
     {
         const int col = col_base + ${t*16} + p;
         const int krow = ${kt*4} + g;
