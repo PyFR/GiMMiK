@@ -2,6 +2,8 @@
 
 from gimmik.base import MatMul
 
+import numpy as np
+
 
 class HIPMatMul(MatMul):
     platform = 'hip'
@@ -38,6 +40,20 @@ class HIPMatMul(MatMul):
         args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
         meta = {'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize}
         yield from emit('cstream-ksplit', args, meta)
+
+        # Dense f64 GEMM via the CDNA Matrix Cores (MFMA); see mfma-dense.mako.
+        # Modelled on the NVIDIA DMMA dense path: A is densified + baked in
+        # Matrix-Core fragment order, B is streamed, C is non-temporal stored.
+        # Densifying means it only pays off for reasonably dense operands, and
+        # the MFMA intrinsic is CDNA3-only (gfx94x).
+        if self._is_cdna3(gcn_arch) and self._mfma_dense_ok(dsize):
+            blkx = 64
+            a_hex, m_tiles, k_tiles = self._mfma_dense_bake()
+            args = {'blockx': blkx, 'a_hex': a_hex,
+                    'm_tiles': m_tiles, 'k_tiles': k_tiles}
+            meta = {'block': (blkx, 1, 1),
+                    'desc': f'mfma-dense/m{m_tiles}-k{k_tiles}-x{blkx}'}
+            yield from emit('mfma-dense', args, meta)
 
         # Only emit tuned variants on architectures they have been validated for.
         base_arch = gcn_arch.split(':', 1)[0] if gcn_arch else None
@@ -141,6 +157,38 @@ class HIPMatMul(MatMul):
                     )
                 } | wmeta
                 yield from emit('cstream-ksplit-preload-c', args, meta)
+
+    @staticmethod
+    def _is_cdna3(gcn_arch):
+        base = gcn_arch.split(':', 1)[0] if gcn_arch else None
+        return base in {'gfx940', 'gfx941', 'gfx942'}
+
+    def _mfma_dense_ok(self, dsize):
+        # f64 Matrix-Core only; the densified path is only worthwhile when A is
+        # reasonably dense, and is bounded so the baked A array stays small.
+        if dsize != 8 or self.m > 128 or self.k > 128:
+            return False
+        density = np.count_nonzero(self.A) / self.A.size
+        return density >= 0.5
+
+    def _mfma_dense_bake(self):
+        # Densify, pad and reorder A into v_mfma_f64_16x16x4 fragment order:
+        #   Ag[(mt*k_tiles + kt)*64 + lane]
+        #       = A_pad[mt*16 + lane%16][kt*4 + lane//16]
+        # i.e. with lane = g*16 + p, operand A wants i = p, kk = g.
+        m, k = self.A.shape
+        m_tiles = -(-m // 16)
+        k_tiles = -(-k // 4)
+        a_pad = np.zeros((m_tiles*16, k_tiles*4), dtype=np.float64)
+        a_pad[:m, :k] = self.A
+        a_hex = []
+        for mt in range(m_tiles):
+            for kt in range(k_tiles):
+                for lane in range(64):
+                    i = mt*16 + (lane % 16)
+                    kk = kt*4 + (lane // 16)
+                    a_hex.append(float(a_pad[i, kk]).hex())
+        return a_hex, m_tiles, k_tiles
 
     def _process_meta(self, meta):
         if self.n is not None:
