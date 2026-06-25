@@ -24,11 +24,6 @@ class HIPMatMul(MatMul):
 
         blkx = self.basemeta['block'][0]
 
-        # Only emit tuned variants on architectures they have been validated for.
-        base_arch = gcn_arch.split(':', 1)[0] if gcn_arch else None
-        if base_arch not in {'gfx90a', 'gfx942'} or warp_size != 64:
-            return
-
         # Tuned HIP variants
         msplits, ksplits = [8, 4], [4, 2]
         bsz, csz, blkx = 8, 8, 64
