@@ -106,42 +106,50 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     ## and the padded tail are zeroed (A is 0 there, so an MMA against 0 needs a
     ## finite -- not NaN -- operand).  The global read is vectorized as f64x2
     ## when the layout is 2-aligned.
-    __shared__ __align__(16) ${dtype} ${kname}_Bs[${k_pad * blockx}];
-    const int tid = threadIdx.y*${blockx} + threadIdx.x;
+    ## LDS stores ONLY the active k-tiles (inactive 4-wide k-slabs are dropped):
+    ## active kt at position a occupies LDS rows [a*4, a*4+4).  Only bix rows are
+    ## read from global (into their tile slot); hole/pad rows are zeroed so the
+    ## MMA never multiplies A=0 by an uninitialised (possibly NaN) operand.
 <%
-    rows_read = sorted({kt*4 + r for kt in active_kt for r in range(4)})
-    loaded = set(bix_rows)
-    need_zero = any(r not in loaded for r in rows_read)
-    nb = len(bix_rows)
+    compact_pos = {kt: a for a, kt in enumerate(active_kt)}
+    n_akt = len(active_kt)
+    # for each used k-row: (global row, compact LDS row)
+    bload = [(kr, compact_pos[kr // 4]*4 + kr % 4)
+             for kr in bix_rows if (kr // 4) in compact_pos]
+    nb = len(bload)
+    need_zero = nb < n_akt*4          # any hole/pad row inside an active tile
     nthreads = blockx * msplit
     half = blockx // 2
 %>
+    __shared__ __align__(16) ${dtype} ${kname}_Bs[${n_akt * 4 * blockx}];
+    const int tid = threadIdx.y*${blockx} + threadIdx.x;
 % if need_zero:
-    for (int idx = tid; idx < ${k_pad * blockx}; idx += ${nthreads})
+    for (int idx = tid; idx < ${n_akt * 4 * blockx}; idx += ${nthreads})
         ${kname}_Bs[idx] = (${dtype})0;
     __syncthreads();
 % endif
-    static const int ${kname}_brows[${nb}] = { ${', '.join(map(str, bix_rows))} };
+    static const int ${kname}_bg[${nb}] = { ${', '.join(str(g) for g, _ in bload)} };
+    static const int ${kname}_bl[${nb}] = { ${', '.join(str(l) for _, l in bload)} };
 % if vec2:
     for (int idx = tid; idx < ${nb * half}; idx += ${nthreads})
     {
-        const int krow = ${kname}_brows[idx / ${half}];
+        const int r = idx / ${half};
         const int cc = (idx % ${half}) * 2;
         const int col = col_base + cc;
         if (col + 1 < n)
-            *(gimmik_f64x2*)&${kname}_Bs[krow*${blockx} + cc] =
-                *(const gimmik_f64x2*)&b[krow*ldb + col];
+            *(gimmik_f64x2*)&${kname}_Bs[${kname}_bl[r]*${blockx} + cc] =
+                *(const gimmik_f64x2*)&b[${kname}_bg[r]*ldb + col];
         else if (col < n)
-            ${kname}_Bs[krow*${blockx} + cc] = b[krow*ldb + col];
+            ${kname}_Bs[${kname}_bl[r]*${blockx} + cc] = b[${kname}_bg[r]*ldb + col];
     }
 % else:
     for (int idx = tid; idx < ${nb * blockx}; idx += ${nthreads})
     {
-        const int krow = ${kname}_brows[idx / ${blockx}];
+        const int r = idx / ${blockx};
         const int cc = idx % ${blockx};
         const int col = col_base + cc;
         if (col < n)
-            ${kname}_Bs[krow*${blockx} + cc] = b[krow*ldb + col];
+            ${kname}_Bs[${kname}_bl[r]*${blockx} + cc] = b[${kname}_bg[r]*ldb + col];
     }
 % endif
     __syncthreads();
@@ -159,7 +167,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 %   endfor
 %   for kt in active_kt:
 %    for t in range(tiles):
-        bv_${t} = ${kname}_Bs[(${kt*4} + g)*${blockx} + ${t*16} + p];
+        bv_${t} = ${kname}_Bs[(${compact_pos[kt]*4} + g)*${blockx} + ${t*16} + p];
 %    endfor
 %    for j, mt in enumerate(mts):
 %     if amask[mt][kt]:
