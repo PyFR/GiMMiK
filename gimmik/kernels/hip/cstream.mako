@@ -1,6 +1,8 @@
 <%inherit file='base'/>
 
-<% ksplit = 2 if m < 36 else 1 %>
+<%
+preload = context.get('preload', False)
+%>
 
 __global__ __launch_bounds__(${blockx}) void
 % if n is None:
@@ -37,10 +39,23 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
       dotex = 'make_zero()'
   %>
         dotp = ${dotex};
-  % if not nzixs:
-        dotp = make_zero();
-  % endif
-  % if beta == 0:
+  % if preload and nzixs:
+    % if beta == 0:
+        store_c(&c[i + ${j}*ldc], dotp);
+    % elif beta == 1:
+        dotp = load_c(&c[i + ${j}*ldc]) + dotp;
+        store_c(&c[i + ${j}*ldc], dotp);
+    % else:
+        dotp = ${beta}*load_c(&c[i + ${j}*ldc]) + dotp;
+        store_c(&c[i + ${j}*ldc], dotp);
+    % endif
+  % elif preload:
+    % if beta == 0:
+        store_c(&c[i + ${j}*ldc], make_zero());
+    % elif beta != 1:
+        store_c(&c[i + ${j}*ldc], ${beta}*load_c(&c[i + ${j}*ldc]));
+    % endif
+  % elif beta == 0:
         store_c(&c[i + ${j}*ldc], dotp);
   % elif beta == 1 and nzixs:
         store_c(&c[i + ${j}*ldc], load_c(&c[i + ${j}*ldc]) + dotp);

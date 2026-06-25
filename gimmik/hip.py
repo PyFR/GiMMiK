@@ -19,6 +19,9 @@ class HIPMatMul(MatMul):
             if threads <= max_block_threads and shared <= max_shared:
                 yield (name, args, meta)
 
+        def emit_preload(name, args, meta):
+            yield from emit(name, args | {'preload': True}, meta)
+
         blkx = self.basemeta['block'][0]
 
         # B loading, C streaming kernel
@@ -92,12 +95,12 @@ class HIPMatMul(MatMul):
             args = {'blockx': blkx} | wargs
             meta = {'block': (blkx, 1, 1),
                     'desc': f'cstream-preload-c/{wpfx}x{blkx}'} | wmeta
-            yield from emit('cstream-preload-c', args, meta)
+            yield from emit_preload('cstream', args, meta)
 
             # B streaming, C preloading, C accumulation kernel
             meta = {'block': (blkx, 1, 1),
                     'desc': f'bstream-preload-c/{wpfx}x{blkx}'} | wmeta
-            yield from emit('bstream-preload-c', args, meta)
+            yield from emit_preload('bstream', args, meta)
 
             for ms in msplits:
                 # m-split B streaming, C preloading, C accumulation kernel
@@ -110,7 +113,7 @@ class HIPMatMul(MatMul):
                         f'{wpfx}m{ms}-b{bsz}-x{blkx}'
                     )
                 } | wmeta
-                yield from emit('bstream-msplit-preload-c', args, meta)
+                yield from emit_preload('bstream-msplit', args, meta)
 
             for ks in ksplits:
                 # k-split B loading, C preloading, C streaming kernel
@@ -123,7 +126,7 @@ class HIPMatMul(MatMul):
                         f'{wpfx}k{ks}-c{csz}-x{blkx}'
                     )
                 } | wmeta
-                yield from emit('cstream-ksplit-preload-c', args, meta)
+                yield from emit_preload('cstream-ksplit', args, meta)
 
     def _process_meta(self, meta):
         if self.n is not None:

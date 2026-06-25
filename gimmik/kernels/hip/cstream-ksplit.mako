@@ -4,6 +4,7 @@
 kparts = partition(A, ksplit, by='cols')
 cchunks = chunk(range(m), csz)
 loaded = set()
+preload = context.get('preload', False)
 %>
 
 __global__ __launch_bounds__(${blockx*ksplit}) void
@@ -45,6 +46,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
       % endfor
       <%
       nzixs = [(l_idx, kbx[l_idx]) for l_idx in A[j, kbx].nonzero()[0]]
+      has_dotp = A[j].any()
       if nzixs:
           first_l_idx, first_kx = nzixs[0]
           dotex = f"{A[j, first_kx]}*bv[{first_l_idx}]"
@@ -56,7 +58,17 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         dotp = ${dotex};
       ## Save to a register
       % if loop.index % ksplit == bid:
+        % if preload and beta == 0:
         cv[${loop.index // ksplit}] = dotp;
+        % elif preload and beta == 1 and has_dotp:
+        cv[${loop.index // ksplit}] = load_c(&c[i + ${j}*ldc]);
+        cv[${loop.index // ksplit}] += dotp;
+        % elif preload and has_dotp:
+        cv[${loop.index // ksplit}] = ${beta}*load_c(&c[i + ${j}*ldc]);
+        cv[${loop.index // ksplit}] += dotp;
+        % elif not preload:
+        cv[${loop.index // ksplit}] = dotp;
+        % endif
       ## Save to shared memory
       % else:
         csub[${bid - (bid > loop.index % ksplit)}][${loop.index}][threadIdx.x] = dotp;
@@ -72,17 +84,31 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     ## Sum and output the final set of dot products
     % for j in cchunk:
       % if loop.index % ksplit == bid:
+        <% has_dotp = A[j].any() %>
         <%
         sum_expr = f"cv[{loop.index // ksplit}]"
         for s_idx in range(ksplit - 1):
             sum_expr = f"{sum_expr} + csub[{s_idx}][{loop.index}][threadIdx.x]"
         %>
+        % if preload and beta == 0:
         dotp = ${sum_expr};
-        % if beta == 0:
+        store_c(&c[i + ${j}*ldc], dotp);
+        % elif preload and beta == 1 and has_dotp:
+        dotp = ${sum_expr};
+        store_c(&c[i + ${j}*ldc], dotp);
+        % elif preload and beta != 1 and has_dotp:
+        dotp = ${sum_expr};
+        store_c(&c[i + ${j}*ldc], dotp);
+        % elif preload and beta != 1:
+        store_c(&c[i + ${j}*ldc], ${beta}*load_c(&c[i + ${j}*ldc]));
+        % elif beta == 0:
+        dotp = ${sum_expr};
         store_c(&c[i + ${j}*ldc], dotp);
         % elif beta == 1:
+        dotp = ${sum_expr};
         store_c(&c[i + ${j}*ldc], load_c(&c[i + ${j}*ldc]) + dotp);
         % else:
+        dotp = ${sum_expr};
         store_c(&c[i + ${j}*ldc], dotp + ${beta}*load_c(&c[i + ${j}*ldc]));
         % endif
       % endif

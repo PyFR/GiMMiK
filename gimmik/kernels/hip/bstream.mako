@@ -1,5 +1,7 @@
 <%inherit file='base'/>
 
+<% preload = context.get('preload', False) %>
+
 __global__ __launch_bounds__(${blockx}) void
 % if n is None:
 ${kname}(int n,
@@ -24,17 +26,34 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     {
         ${dtype} bv, csub[${m}];
 
-## Iterare through the used rows of B
+% if preload and beta != 0:
+## Preload C values for rows which will receive a non-zero dot product
+% for j, jx in enumerate(afix):
+  % if jx != -1:
+    % if beta == 1:
+        csub[${j}] = load_c(&c[i + ${j}*ldc]);
+    % else:
+        csub[${j}] = ${beta}*load_c(&c[i + ${j}*ldc]);
+    % endif
+  % endif
+% endfor
+% endif
+
+## Iterate through the used rows of B
 % for kx in bix:
         bv = load_b(&b[i + ${kx}*ldb]);
   % for j, jx in enumerate(A[:, kx]):
-    % if jx != 0 and kx == afix[j]:
+    % if preload and beta != 0 and jx != 0:
+        csub[${j}] += ${jx}*bv;
+    % elif jx != 0 and kx == afix[j]:
         csub[${j}] = ${jx}*bv;
     % elif jx != 0:
         csub[${j}] += ${jx}*bv;
     % endif
     ##
-    % if kx == alix[j] and beta == 0:
+    % if preload and kx == alix[j]:
+        store_c(&c[i + ${j}*ldc], csub[${j}]);
+    % elif kx == alix[j] and beta == 0:
         store_c(&c[i + ${j}*ldc], csub[${j}]);
     % elif kx == alix[j] and beta == 1:
         store_c(&c[i + ${j}*ldc], load_c(&c[i + ${j}*ldc]) + csub[${j}]);
