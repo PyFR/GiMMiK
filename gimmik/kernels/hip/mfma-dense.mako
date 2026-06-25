@@ -14,7 +14,7 @@
 ##     g = lane / 16   (0..3)      p = lane % 16   (0..15)
 ##   A  (16x4, 1 reg/lane):  A[i][kk]  with  i = p,        kk = g
 ##   B  (4x16, 1 reg/lane):  B[kk][j]  with  kk = g,       j  = p
-##   C/D(16x16, 4 reg/lane): D[i][j]   with  j = p,        i  = 4*g + reg
+##   C/D(16x16, 4 reg/lane): D[i][j]   with  j = p,        i  = 4*reg + g
 ## The baked A array (built in hip.py) uses EXACTLY this mapping:
 ##   Ag[(mt*k_tiles + kt)*64 + lane] = A_padded[mt*16 + (lane%16)][kt*4 + (lane//16)]
 ## If an on-device accuracy check fails, this single mapping (here + in
@@ -82,7 +82,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 %  for t in range(tiles):
 %   for reg in range(4):
     {
-        const int row = ${mt*16 + reg} + 4*g;
+        const int row = ${mt*16 + 4*reg} + g;
         const int col = col_base + ${t*16} + p;
         if (row < ${m} && col < n)
 % if beta == 0:
