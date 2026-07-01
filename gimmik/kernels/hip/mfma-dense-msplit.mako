@@ -3,14 +3,11 @@
 ## Dense double-precision GEMM on the CDNA Matrix Cores (MFMA).
 ##
 ## A is densified, padded and baked into the kernel in Matrix-Core fragment
-## order; B is streamed; C is non-temporal stored; the epilogue is fully
-## unrolled.  Two code paths:
-##   msplit == 1  -- direct: one wavefront, B straight from global, compile-time
-##                   zero-tile skipping (skip MMA + B load for all-zero tiles).
-##   msplit  > 1  -- m-split + k-blocked: msplit wavefronts (block.y) each own a
-##                   slice of the m-tiles; B is staged into LDS in chunks of kc
-##                   active k-tiles (bounds LDS for any k) with a double2
-##                   cooperative copy, and only the k-rows A uses (bix) are read.
+## order; B is staged through LDS; C is non-temporal stored; the epilogue is
+## fully unrolled.  This m-split + k-blocked path uses msplit wavefronts
+## (block.y), each owning a slice of the m-tiles.  B is staged into LDS in
+## chunks of kc active k-tiles so LDS usage is bounded for any k, and only the
+## k-rows A uses (bix) are read.
 ##
 ## Operand lane layout for v_mfma_f64_16x16x4_f64 (wave64), g=lane/16, p=lane%16:
 ##   A  (16x4 ): A[i][kk]  i=p,        kk=g
@@ -49,56 +46,6 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     const int p = lane % 16;
     const int col_base = ${blockx}*blockIdx.x;
 
-% if msplit == 1:
-    ## ---- direct path: single wavefront, B straight from global ----
-    ${dtype} a;
-% for t in range(tiles):
-    ${dtype} bv_${t};
-% endfor
-% for mt in range(m_tiles):
-%  for t in range(tiles):
-    gimmik_f64x4 acc_${mt}_${t} = {0.0, 0.0, 0.0, 0.0};
-%  endfor
-% endfor
-% for kt in active_kt:
-<% krow_guard = (kt + 1)*4 > k %>
-%  for t in range(tiles):
-    {
-        const int col = col_base + ${t*16} + p;
-        const int krow = ${kt*4} + g;
-        bv_${t} = (col < n${' && krow < %d' % k if krow_guard else ''}) ? b[krow*ldb + col] : (${dtype})0;
-    }
-%  endfor
-%  for mt in range(m_tiles):
-%   if amask[mt][kt]:
-    a = ${kname}_Ag[${(mt*k_tiles + kt)*64} + lane];
-%    for t in range(tiles):
-    acc_${mt}_${t} = __builtin_amdgcn_mfma_f64_16x16x4f64(a, bv_${t}, acc_${mt}_${t}, 0, 0, 0);
-%    endfor
-%   endif
-%  endfor
-% endfor
-% for mt in range(m_tiles):
-%  for t in range(tiles):
-%   for reg in range(4):
-    {
-        const int row = ${mt*16 + 4*reg} + g;
-        const int col = col_base + ${t*16} + p;
-        if (row < ${m} && col < n)
-% if beta == 0:
-            store_c(&c[row*ldc + col], acc_${mt}_${t}[${reg}]);
-% elif beta == 1:
-            store_c(&c[row*ldc + col], gimmik_vadd(load_c(&c[row*ldc + col]), acc_${mt}_${t}[${reg}]));
-% else:
-            store_c(&c[row*ldc + col], gimmik_vadd(gimmik_vmul(${beta}, load_c(&c[row*ldc + col])), acc_${mt}_${t}[${reg}]));
-% endif
-    }
-%   endfor
-%  endfor
-% endfor
-
-% else:
-    ## ---- m-split + k-blocked path ----
 <%
     chunks = [active_kt[c:c+kc] for c in range(0, len(active_kt), kc)]
     nthreads = blockx * msplit
@@ -189,13 +136,12 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 % if beta == 0:
             store_c(&c[row*ldc + col], acc_${j}_${t}[${reg}]);
 % elif beta == 1:
-            store_c(&c[row*ldc + col], gimmik_vadd(load_c(&c[row*ldc + col]), acc_${j}_${t}[${reg}]));
+            store_c(&c[row*ldc + col], load_c(&c[row*ldc + col]) + acc_${j}_${t}[${reg}]);
 % else:
-            store_c(&c[row*ldc + col], gimmik_vadd(gimmik_vmul(${beta}, load_c(&c[row*ldc + col])), acc_${j}_${t}[${reg}]));
+            store_c(&c[row*ldc + col], ${beta}*load_c(&c[row*ldc + col]) + acc_${j}_${t}[${reg}]);
 % endif
     }
 %   endfor
 %  endfor
 % endfor
-% endif
 }
