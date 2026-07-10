@@ -97,6 +97,8 @@ class HIPMatMul(MatMul):
             packed_mfma_tiles = [
                 (64, 64, 8, 64, 4),
                 (128, 64, 8, 64, 4),
+                (64, 128, 8, 64, 4),
+                (128, 128, 8, 64, 4),
             ]
 
             widths = [2] if self.aligne is not None and self.aligne % 2 == 0 else [1]
