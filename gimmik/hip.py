@@ -40,33 +40,6 @@ class HIPMatMul(MatMul):
         }
         yield from emit('cstream-ksplit', args, meta)
 
-        if dsize == 8:
-            blkx = 64
-            a_hex, m_tiles, k_tiles, amask = self._mfma_dense_bake()
-            bix_rows = sorted(self.bix)          # k-rows A actually uses
-            vec2_opts = [(False, '')]
-            if self.aligne is not None and self.aligne % 2 == 0:
-                vec2_opts.insert(0, (True, 'w2-'))
-
-            for vec2, wpfx in vec2_opts:
-                for kc in [8, 16]:
-                    shared = kc*4*blkx*dsize
-                    for ms in [8, 16]:
-                        args = {
-                            'blockx': blkx, 'a_hex': a_hex,
-                            'm_tiles': m_tiles, 'k_tiles': k_tiles,
-                            'amask': amask, 'msplit': ms,
-                            'bix_rows': bix_rows, 'vec2': vec2, 'kc': kc
-                        }
-                        meta = {
-                            'block': (blkx, ms, 1), 'shared': shared,
-                            'desc': (
-                                f'mfma-dense-msplit/{wpfx}'
-                                f'm{m_tiles}-k{k_tiles}-s{ms}-kc{kc}-x{blkx}'
-                            )
-                        }
-                        yield from emit('mfma-dense-msplit', args, meta)
-
         # Tuned HIP variants
         msplits, ksplits = [8, 4], [4, 2]
         bsz, csz, blkx = 8, 8, 64
@@ -116,31 +89,89 @@ class HIPMatMul(MatMul):
                 } | wmeta
                 yield from emit_preload('cstream-ksplit', args, meta)
 
-    def _mfma_dense_bake(self):
-        # Densify, pad and reorder A into v_mfma_f64_16x16x4 fragment order:
-        #   Ag[(mt*k_tiles + kt)*64 + lane]
-        #       = A_pad[mt*16 + lane%16][kt*4 + lane//16]
-        # i.e. with lane = g*16 + p, operand A wants i = p, kk = g.
-        # amask[mt][kt] flags 16x4 A-tiles that contain a non-zero, so the
-        # kernel can skip the MMA (and, on the direct path, the B load) for
-        # all-zero tiles -- structural zero-tile skipping.
+        if dsize == 8:
+            # ── mfma-tile-gemm ────────────────────────────────────────────
+            # Packed Direct-A MFMA path with B-reuse workgroup mapping and
+            # cached B loads.  NT is the scalar output-column tile; width
+            # converts it to vector columns before rendering the kernel.
+            packed_mfma_tiles = [
+                (64, 64, 8, 64, 4),
+                (128, 64, 8, 64, 4),
+            ]
+
+            widths = [2] if self.aligne is not None and self.aligne % 2 == 0 else [1]
+
+            for width in widths:
+                wargs = ({'dtype': f'{dtype}{width}', 'width': width,
+                          'sdtype': dtype} if width > 1 else {})
+                wpfx = f'w{width}-' if width > 1 else ''
+
+                for MT, NT, KT, blockx, blocky in packed_mfma_tiles:
+                    if NT % width:
+                        raise ValueError('mfma-tile-gemm width expects NT divisible by width')
+
+                    vNT = NT // width
+                    block = (blockx, blocky, 1)
+                    a_packed_hex, m_pad, k_pad = self._dense_mfma_lane_bake(MT, KT)
+                    direct_a_shared = 2*(KT*NT)*dsize
+                    bpfx = f'b{blocky}-' if blocky != 4 else ''
+                    args = {
+                        'MT': MT, 'NT': vNT, 'KT': KT,
+                        'blockx': block[0], 'blocky': block[1],
+                        'a_hex': a_packed_hex, 'm_pad': m_pad,
+                        'k_pad': k_pad,
+                    } | wargs
+                    width_meta = {'width': width} if width > 1 else {}
+                    yield from emit(
+                        'mfma-tile-gemm',
+                        args,
+                        {
+                            'block': block, 'shared': direct_a_shared,
+                            'bm': MT, 'ncols': vNT,
+                            'desc': (
+                                f'mfma-tile-gemm/'
+                                f'{wpfx}{bpfx}mt{MT}-nt{NT}-kt{KT}'
+                            ),
+                        } | width_meta
+                    )
+
+    def _dense_mfma_lane_bake(self, BM, BK):
+        # Pack A so each lane can vector-load the two FP64 operands it consumes
+        # across a pair of consecutive 16x16x4 MFMA K groups:
+        #   Apg[row16_tile][kg_pair][lane][which]
+        # where lane = g*16 + p and which selects kg_pair*2 + {0, 1}.
+        if BK % 8:
+            raise ValueError('mfma lane-packed A expects BK to be a multiple of 8')
+
         m, k = self.A.shape
-        m_tiles = -(-m // 16)
-        k_tiles = -(-k // 4)
-        a_pad = np.zeros((m_tiles*16, k_tiles*4), dtype=np.float64)
+        m_pad = -(-m // BM) * BM
+        k_pad = -(-k // BK) * BK
+        a_pad = np.zeros((m_pad, k_pad), dtype=np.float64)
         a_pad[:m, :k] = self.A
-        a_hex = []
-        for mt in range(m_tiles):
-            for kt in range(k_tiles):
-                for lane in range(64):
-                    i = mt*16 + (lane % 16)
-                    kk = kt*4 + (lane // 16)
-                    a_hex.append(float(a_pad[i, kk]).hex())
-        amask = [[bool(np.any(a_pad[mt*16:mt*16+16, kt*4:kt*4+4]))
-                  for kt in range(k_tiles)] for mt in range(m_tiles)]
-        return a_hex, m_tiles, k_tiles, amask
+
+        packed = []
+        kg_pairs = BK // 8
+        for row16 in range(m_pad // 16):
+            row_base = row16*16
+            for ktile in range(k_pad // BK):
+                k_base = ktile*BK
+                for kgp in range(kg_pairs):
+                    for lane in range(64):
+                        g = lane // 16
+                        p = lane % 16
+                        row = row_base + p
+                        for which in range(2):
+                            kg = 2*kgp + which
+                            packed.append(a_pad[row, k_base + kg*4 + g])
+
+        return [float(x).hex() for x in packed], m_pad, k_pad
 
     def _process_meta(self, meta):
+        bm = meta.get('bm')
+        if bm is not None:
+            meta['grid_y'] = -(-self.A.shape[0] // bm)
+
         if self.n is not None:
-            div = meta['block'][0]*meta['width']
-            meta['grid'] = (-(-self.n // div), 1, 1)
+            div = meta.get('ncols', meta['block'][0])*meta['width']
+            gy = meta.get('grid_y', 1)
+            meta['grid'] = (-(-self.n // div), gy, 1)
