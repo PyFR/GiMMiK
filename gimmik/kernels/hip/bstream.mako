@@ -30,11 +30,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 ## Preload C values for rows which will receive a non-zero dot product
 % for j, jx in enumerate(afix):
   % if jx != -1:
-    % if beta == 1:
-        csub[${j}] = load_c(&c[i + ${j}*ldc]);
-    % else:
-        csub[${j}] = ${beta}*load_c(&c[i + ${j}*ldc]);
-    % endif
+        csub[${j}] = ${'' if beta == 1 else f'{beta}*'}load_c(&c[i + ${j}*ldc]);
   % endif
 % endfor
 % endif

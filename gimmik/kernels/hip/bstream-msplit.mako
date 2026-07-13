@@ -43,11 +43,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
   ## Preload C values for active rows owned by this m-split lane
   % for j, jx in enumerate(mx[cid]):
     % if afix[jx] != -1:
-      % if beta == 1:
-        csub[${j}] = load_c(&c[i + ${jx}*ldc]);
-      % else:
-        csub[${j}] = ${beta}*load_c(&c[i + ${jx}*ldc]);
-      % endif
+        csub[${j}] = ${'' if beta == 1 else f'{beta}*'}load_c(&c[i + ${jx}*ldc]);
     % endif
   % endfor
   % endif
