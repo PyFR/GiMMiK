@@ -90,6 +90,58 @@ class MatMul:
         self.bix = np.nonzero(np.any(A != 0, axis=0))[0]
         self.bix = {kx: k for k, kx in enumerate(self.bix)}
 
+    def _process_dtype(self, dtype):
+        dtype = np.dtype(dtype).type
+        if dtype == np.float32:
+            return 'float', 4
+        elif dtype == np.float64:
+            return 'double', 8
+        else:
+            raise ValueError('Invalid floating point data type')
+
+    def _base_args(self, dtype, kname):
+        return {
+            'dtype': dtype, 'kname': kname,
+            'A': self.A, 'beta': self.beta, 'width': 1,
+            'm': self.m, 'n': self.n, 'k': self.k,
+            'ldb': self.ldb, 'ldc': self.ldc,
+            'afix': self.afix, 'alix': self.alix, 'bix': self.bix,
+            'dot': _dot, 'partition': _partition, 'chunk': _chunk
+        }
+
+    def _candidate_specs(self, dtype, dsize, **kwargs):
+        yield from self._kernel_generators(dtype, dsize, **kwargs)
+
+    def _render_candidate_spec(self, dtype, kname, spec):
+        name, exargs, exmeta = spec
+
+        # Merge in the base arguments and metadata
+        args = self._base_args(dtype, kname) | exargs
+        meta = self.basemeta | exmeta
+
+        # Render the kernel template
+        src = self._render_kernel(dtype, name, args)
+
+        # Post-process the metadata
+        meta['tplname'] = name
+        self._process_meta(meta)
+
+        return src, meta
+
+    def candidate_count(self, dtype, **kwargs):
+        dtype, dsize = self._process_dtype(dtype)
+
+        return sum(1 for _ in self._candidate_specs(dtype, dsize, **kwargs))
+
+    def render_candidate(self, idx, dtype, kname='gimmik_mm', **kwargs):
+        dtype, dsize = self._process_dtype(dtype)
+
+        for i, spec in enumerate(self._candidate_specs(dtype, dsize, **kwargs)):
+            if i == idx:
+                return self._render_candidate_spec(dtype, kname, spec)
+
+        raise IndexError(idx)
+
     def kernels(self, dtype, kname='gimmik_mm', **kwargs):
         basemeta = self.basemeta
 

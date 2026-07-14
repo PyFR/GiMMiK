@@ -9,7 +9,7 @@ class HIPMatMul(MatMul):
     platform = 'hip'
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0}
 
-    def _kernel_generators(self, dtype, dsize, *, gcn_arch=None, warp_size=64):
+    def _candidate_specs(self, dtype, dsize, *, gcn_arch=None, warp_size=64):
         max_block_threads = 1024
         max_shared = 64*1024
 
@@ -104,38 +104,62 @@ class HIPMatMul(MatMul):
             widths = [2] if self.aligne is not None and self.aligne % 2 == 0 else [1]
 
             for width in widths:
-                wargs = ({'dtype': f'{dtype}{width}', 'width': width,
-                          'sdtype': dtype} if width > 1 else {})
-                wpfx = f'w{width}-' if width > 1 else ''
-
                 for MT, NT, KT, blockx, blocky in packed_mfma_tiles:
                     if NT % width:
                         raise ValueError('mfma-tile-gemm width expects NT divisible by width')
 
-                    vNT = NT // width
                     block = (blockx, blocky, 1)
-                    a_packed_hex, m_pad, k_pad = self._dense_mfma_lane_bake(MT, KT)
-                    direct_a_shared = 2*(KT*NT)*dsize
-                    bpfx = f'b{blocky}-' if blocky != 4 else ''
-                    args = {
-                        'MT': MT, 'NT': vNT, 'KT': KT,
-                        'blockx': block[0], 'blocky': block[1],
-                        'a_hex': a_packed_hex, 'm_pad': m_pad,
-                        'k_pad': k_pad,
-                    } | wargs
-                    width_meta = {'width': width} if width > 1 else {}
-                    yield from emit(
-                        'mfma-tile-gemm',
-                        args,
-                        {
-                            'block': block, 'shared': direct_a_shared,
-                            'bm': MT, 'ncols': vNT,
-                            'desc': (
-                                f'mfma-tile-gemm/'
-                                f'{wpfx}{bpfx}mt{MT}-nt{NT}-kt{KT}'
-                            ),
-                        } | width_meta
-                    )
+                    shared = 2*(KT*NT)*dsize
+                    threads = block[0]*block[1]*block[2]
+
+                    if threads <= max_block_threads and shared <= max_shared:
+                        yield ('mfma-tile-gemm',
+                               (width, MT, NT, KT, blockx, blocky, dsize))
+
+    def _render_candidate_spec(self, dtype, kname, spec):
+        if len(spec) == 2 and spec[0] == 'mfma-tile-gemm':
+            spec = self._expand_mfma_candidate_spec(dtype, spec)
+
+        return super()._render_candidate_spec(dtype, kname, spec)
+
+    def _expand_mfma_candidate_spec(self, dtype, spec):
+        name, mspec = spec
+        width, MT, NT, KT, blockx, blocky, dsize = mspec
+        vNT = NT // width
+        block = (blockx, blocky, 1)
+        a_packed_hex, m_pad, k_pad = self._dense_mfma_lane_bake(MT, KT)
+        direct_a_shared = 2*(KT*NT)*dsize
+
+        wargs = ({'dtype': f'{dtype}{width}', 'width': width,
+                  'sdtype': dtype} if width > 1 else {})
+        width_meta = {'width': width} if width > 1 else {}
+        wpfx = f'w{width}-' if width > 1 else ''
+        bpfx = f'b{blocky}-' if blocky != 4 else ''
+
+        args = {
+            'MT': MT, 'NT': vNT, 'KT': KT,
+            'blockx': block[0], 'blocky': block[1],
+            'a_hex': a_packed_hex, 'm_pad': m_pad,
+            'k_pad': k_pad,
+        } | wargs
+        meta = {
+            'block': block, 'shared': direct_a_shared,
+            'bm': MT, 'ncols': vNT,
+            'desc': (
+                f'mfma-tile-gemm/'
+                f'{wpfx}{bpfx}mt{MT}-nt{NT}-kt{KT}'
+            ),
+        } | width_meta
+
+        return name, args, meta
+
+    def _kernel_generators(self, dtype, dsize, *, gcn_arch=None, warp_size=64):
+        for spec in self._candidate_specs(dtype, dsize, gcn_arch=gcn_arch,
+                                          warp_size=warp_size):
+            if len(spec) == 2 and spec[0] == 'mfma-tile-gemm':
+                spec = self._expand_mfma_candidate_spec(dtype, spec)
+
+            yield spec
 
     def _dense_mfma_lane_bake(self, BM, BK):
         # Pack A so each lane can vector-load the two FP64 operands it consumes
