@@ -22,7 +22,7 @@ else:
 
 # Data
 package_data = {
-    'gimmik': ['kernels/*/*.mako', 'kernels/ptx/config/*.json'],
+    'gimmik': ['kernels/*/*.mako', 'configs/*/*.json'],
 }
 
 # Hard dependencies

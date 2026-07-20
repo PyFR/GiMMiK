@@ -106,8 +106,8 @@ def bsub_off(buf, idx):
 ## Main loop over B-chunks (double-buffered)
 %  for bb in range(len(bchunks)):
 <%
-        buf_cur = bb % 2
-        buf_next = (bb + 1) % 2
+    buf_cur = bb % 2
+    buf_next = (bb + 1) % 2
 %>
 %   if not loop.last:
 %    for idx, kx in [(i, k) for i, k in enumerate(bchunks[bb + 1]) if i % msplit == cid]:

@@ -208,8 +208,12 @@ $L_LOOP:
 % endfor
 
 % for ki in range(k_tiles):
-%  for nt in range(nn):
-%   for kg in range(k_groups):
+<%
+    ki_used = any(a_tile_nz[mt][ki] for mt in range(m_tiles))
+%>
+%  if ki_used:
+%   for nt in range(nn):
+%    for kg in range(k_groups):
 <%
     pvb = f'pvalid_bcol_{nt}' if not n_col_aligned else None
     k_tail = (k_rem != 0 and loop.parent.parent.last)
@@ -219,32 +223,35 @@ $L_LOOP:
     {
         .reg .u64 baddr;
         add.u64 baddr, b_thr_base, ${ki * b_kiter_stride + kg * b_kgroup_stride + nt * b_ntile_stride};
-%    if needs_zero:
+%     if needs_zero:
         mov.${pftype} b_frag_${nt}_${kg}, ${fzero};
-%    endif
-%    if k_tail:
+%     endif
+%     if k_tail:
         .reg .pred ${pbrow};
         {
             .reg .u32 brow;
             add.u32 brow, r_mod4, ${tile_k * ki + 4 * kg};
             setp.lt.u32 ${pbrow}, brow, ${k};
         }
-%    endif
+%     endif
         ${pred_emit(f'ld.weak.global.cg.{pftype} b_frag_{nt}_{kg}, [baddr];', pbrow, pvb, pred_reg=f'pb_{ki}_{nt}_{kg}')}
     }
+%    endfor
 %   endfor
-%  endfor
+%  endif
 %  for mt in range(m_tiles):
-%   for ai in range(a_regs):
-    ld.shared.${pftype} a_frag_${ai}, [as_thr_base + ${(mt * k_tiles + ki) * frag_stride_bytes + 32 * ai * dwidth_i}];
-%   endfor
-%   for nt in range(nn):
+%   if a_tile_nz[mt][ki]:
+%    for ai in range(a_regs):
+    ld.shared.${pftype} a_frag_${ai}, [as_thr_base + ${a_tile_idx[mt][ki] * frag_stride_bytes + 32 * ai * dwidth_i}];
+%    endfor
+%    for nt in range(nn):
     mma.sync.aligned.${ptx_mma_shape}.row.col.${pftype}.${pftype}.${pftype}.${pftype}
         ${reg_list(f'c_{nt}_{mt}', c_regs)},
         ${reg_list('a_frag', a_regs)},
         ${reg_list(f'b_frag_{nt}', b_regs)},
         ${reg_list(f'c_{nt}_{mt}', c_regs)};
-%   endfor
+%    endfor
+%   endif
 %  endfor
 % endfor
 

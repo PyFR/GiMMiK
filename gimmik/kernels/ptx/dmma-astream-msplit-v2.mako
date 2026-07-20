@@ -3,17 +3,17 @@
 .global .align 16 .b64 ${kname}_Ag[${a_elems}] = {
     ${', '.join(a_u64)}
 };
-.extern .shared .align 128 .b8 ${kname}_dynm[];
-
 .visible .entry ${kname}(.param .u64 b_desc,
                          .param .u64 _c)
 .maxntid ${blockx_total}, 1, 1
 {
+    .shared .align 128 .b8 s_b[${b_tile_bytes}];
+    .shared .align 8 .b64 s_tma_mbar;
     .reg .u32 tid, warp, lane, r_mod4, r_div4;
     .reg .u32 ctaid_x, n_start_cta, warp_n, warp_m, warp_n_base;
     .reg .u64 bdesc_addr, c_ptr;
     .reg .u64 ag_thr_base, c_thr_base;
-    .reg .u32 b_smem, b_thr_base, tma_mbar;
+    .reg .u32 b_smem, b_thr_base;
     .reg .pred p_tid0, pwarp_exit, p_load_warp, p_warp_lead;
 % for nt in range(nn):
     .reg .u32 b_col_${nt}, c_col0_${nt}, c_col1_${nt};
@@ -41,12 +41,7 @@
         sub.u32 warp_m, warp, t;
     }
 
-    {
-        .reg .u32 dynm_base;
-        mov.u32 dynm_base, ${kname}_dynm;
-        add.u32 b_smem, dynm_base, ${b_off};
-        add.u32 tma_mbar, dynm_base, ${tma_mbar_off};
-    }
+    mov.u32 b_smem, s_b;
 
     setp.eq.u32 p_tid0, tid, 0;
     setp.eq.u32 p_load_warp, warp, 0;
@@ -55,22 +50,22 @@
         elect.sync _elect_lane|p_warp_lead, 0xffffffff;
     }
 
-    @p_tid0 mbarrier.init.shared::cta.b64 [tma_mbar], 32;
+    @p_tid0 mbarrier.init.shared::cta.b64 [s_tma_mbar], 32;
     @p_tid0 fence.proxy.async.shared::cta;
     bar.sync 0;
 
     @!p_load_warp bra $L_AFTER_B_TMA;
     {
         @p_warp_lead cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes
-            [b_smem], [bdesc_addr, {n_start_cta, 0}], [tma_mbar];
+            [b_smem], [bdesc_addr, {n_start_cta, 0}], [s_tma_mbar];
         @p_warp_lead mbarrier.expect_tx.relaxed.cta.shared::cta.b64
-            [tma_mbar], ${b_tile_bytes};
+            [s_tma_mbar], ${b_tile_bytes};
         bar.warp.sync 0xffffffff;
         .reg .b64 state;
         .reg .pred p1;
-        mbarrier.arrive.shared::cta.b64 state, [tma_mbar];
+        mbarrier.arrive.shared::cta.b64 state, [s_tma_mbar];
 $L_TMA_WAIT:
-        mbarrier.try_wait.shared::cta.b64 p1, [tma_mbar], state, ${mbar_maxwait};
+        mbarrier.try_wait.shared::cta.b64 p1, [s_tma_mbar], state, ${mbar_maxwait};
         @!p1 bra.uni $L_TMA_WAIT;
     }
 $L_AFTER_B_TMA:
@@ -191,8 +186,12 @@ $L_AFTER_B_TMA:
 %   endfor
 
 %   for ki in range(k_tiles):
-%    for nt in range(nn):
-%     for kg in range(k_groups):
+<%
+    ki_used = any(a_tile_nz[mt][ki] for mt in owned_mts)
+%>
+%    if ki_used:
+%     for nt in range(nn):
+%      for kg in range(k_groups):
 <%
     pvb = f'pvalid_bcol_{nt}' if not n_col_aligned else None
     k_tail = (k_rem != 0 and loop.parent.parent.last)
@@ -202,32 +201,35 @@ $L_AFTER_B_TMA:
         {
             .reg .u32 baddr;
             add.u32 baddr, b_thr_base, ${ki * b_smem_kiter_stride + kg * b_smem_kgroup_stride + nt * b_smem_ntile_stride};
-%      if needs_zero:
+%       if needs_zero:
             mov.${pftype} b_frag_${nt}_${kg}, ${fzero};
-%      endif
-%      if k_tail:
+%       endif
+%       if k_tail:
             .reg .pred ${pbrow};
             {
                 .reg .u32 brow;
                 add.u32 brow, r_mod4, ${tile_k * ki + 4 * kg};
                 setp.lt.u32 ${pbrow}, brow, ${k};
             }
-%      endif
+%       endif
             ${pred_emit(f'ld.shared.{pftype} b_frag_{nt}_{kg}, [baddr];', pbrow, pvb, pred_reg=f'pb_{wm}_{ki}_{nt}_{kg}', indent=' ' * 12)}
         }
+%      endfor
 %     endfor
-%    endfor
+%    endif
 %    for mt in owned_mts:
-%     for ai in range(a_regs):
-        ld.weak.global.${pftype} a_frag_${ai}, [ag_thr_base + ${(mt * k_tiles + ki) * frag_stride_bytes + 32 * ai * dwidth_i}];
-%     endfor
-%     for nt in range(nn):
+%     if a_tile_nz[mt][ki]:
+%      for ai in range(a_regs):
+        ld.weak.global.${pftype} a_frag_${ai}, [ag_thr_base + ${a_tile_idx[mt][ki] * frag_stride_bytes + 32 * ai * dwidth_i}];
+%      endfor
+%      for nt in range(nn):
         mma.sync.aligned.${ptx_mma_shape}.row.col.${pftype}.${pftype}.${pftype}.${pftype}
             ${reg_list(f'c_{nt}_{mt}', c_regs)},
             ${reg_list('a_frag', a_regs)},
             ${reg_list(f'b_frag_{nt}', b_regs)},
             ${reg_list(f'c_{nt}_{mt}', c_regs)};
-%     endfor
+%      endfor
+%     endif
 %    endfor
 %   endfor
 

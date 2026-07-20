@@ -2,6 +2,7 @@
 
 import itertools as it
 import json
+from pathlib import Path
 import pkgutil
 import re
 
@@ -55,6 +56,7 @@ def _chunk(l, chunksz):
 
 class MatMul:
     platform = None
+    _float_suffix = 'f'
 
     def __init__(self, A, beta=0.0, aligne=None, n=None, ldb=None, ldc=None):
         self.A = A
@@ -147,22 +149,21 @@ class MatMul:
         pass
 
     def _get_config(self, key):
-        if key not in self._config_cache:
-            cfgdir = f'kernels/{self.platform}/config'
-            path = f'{cfgdir}/{key}.json'
-            default_path = f'{cfgdir}/default.json'
-            try:
-                cfgdata = pkgutil.get_data('gimmik', path)
-            except FileNotFoundError:
-                cfgdata = pkgutil.get_data('gimmik', default_path)
+        try:
+            return self._config_cache[key]
+        except KeyError:
+            cfgdir = Path('configs') / self.platform
+            cfgdata = pkgutil.get_data('gimmik', str(cfgdir / f'{key}.json'))
             self._config_cache[key] = json.loads(cfgdata.decode('utf-8'))
-        return self._config_cache[key]
+            return self._config_cache[key]
 
     def _eval_condition(self, condition, stats):
         if 'all' in condition:
-            return all(self._eval_condition(c, stats) for c in condition['all'])
+            return all(self._eval_condition(c, stats)
+                       for c in condition['all'])
         if 'any' in condition:
-            return any(self._eval_condition(c, stats) for c in condition['any'])
+            return any(self._eval_condition(c, stats)
+                       for c in condition['any'])
         if 'not' in condition:
             return not self._eval_condition(condition['not'], stats)
 
@@ -200,11 +201,9 @@ class MatMul:
         tpl = _PlatformTemplateLookup(self.platform).get_template(tplname)
         src = tpl.render(**tplargs)
 
-        # At single precision suffix all floating point constants by 'f'
-        # (PTX doesn't use an 'f' suffix for FP literals)
-        if dtype == 'float' and self.platform != 'ptx':
+        if dtype == 'float' and self._float_suffix:
             src = re.sub(r'(?=\d*[.eE])(?=\.?\d)\d*\.?\d*(?:[eE][+-]?\d+)?',
-                         r'\g<0>f', src)
+                         rf'\g<0>{self._float_suffix}', src)
 
         # Cleanup
         src = re.sub(r'^\w+\n$', '', src.strip())

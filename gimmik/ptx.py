@@ -5,11 +5,11 @@ from gimmik.base import MatMul
 
 class PTXMatMul(MatMul):
     platform = 'ptx'
+    _float_suffix = ''
     basemeta = {
         'block': (128, 1, 1),
         'width': 1,
-        'shared': 0,
-        'dynamic_shared': 0
+        'shared': 0
     }
 
     # Map explicitly supported CC to minimum PTX version
@@ -35,12 +35,12 @@ class PTXMatMul(MatMul):
 
     @classmethod
     def is_suitable(cls, arr, cc):
-        return cls.is_sparse_suitable(arr, cc) or cls.is_dense_suitable(arr, cc)
+        return (cls.is_sparse_suitable(arr, cc)
+                or cls.is_dense_suitable(arr, cc))
 
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
-                           smem_info=None):
+                           smem_max=None):
         cc = compute_capability or (0, 0)
-        smem_info = smem_info or (48*1024, 48*1024)
         config = self._platform_config(dtype, cc)
 
         # When we know the PTX version but there isn't an SM specific config,
@@ -53,24 +53,21 @@ class PTXMatMul(MatMul):
             ptx = tuple(config['ptx'])
 
         cfgs = config['kernels']
-        cfg = [k for k in cfgs if self._usable_config(k, dtype, cc, smem_info)]
+        cfg = [k for k in cfgs if self._usable_config(k, dtype, cc)]
 
         for k in cfg:
-            if prepared := self._get_render_args(
-                k, dtype, dsize, target_cc, smem_info, ptx
-            ):
+            prepared = self._get_render_args(k, dtype, dsize, target_cc, ptx,
+                                             smem_max)
+            if prepared:
                 yield prepared
 
     def render_config(self, kernel_cfg, dtype, dsize, cc, ptx, *,
-                      kname='gimmik_mm', smem_info=None):
-        smem_info = smem_info or (48*1024, 48*1024)
-
-        if not self._usable_config(kernel_cfg, dtype, cc, smem_info):
+                      kname='gimmik_mm', smem_max=None):
+        if not self._usable_config(kernel_cfg, dtype, cc):
             return None
 
-        prepared = self._get_render_args(
-            kernel_cfg, dtype, dsize, cc, smem_info, ptx
-        )
+        prepared = self._get_render_args(kernel_cfg, dtype, dsize, cc, ptx,
+                                         smem_max)
         if prepared is None:
             return None
 
@@ -83,7 +80,7 @@ class PTXMatMul(MatMul):
         src = self._render_kernel(dtype, tpl, args)
         return src, args, meta
 
-    def _get_render_args(self, kernel_cfg, dtype, dsize, cc, smem_info, ptx):
+    def _get_render_args(self, kernel_cfg, dtype, dsize, cc, ptx, smem_max):
         tpl = kernel_cfg['template']
         family = kernel_cfg['family']
         block = tuple(kernel_cfg['block'])
@@ -92,7 +89,6 @@ class PTXMatMul(MatMul):
         base_args = {
             'ptx': ptx,
             'cc': cc,
-            'smem_info': smem_info,
             'pred_emit': self._pred_emit,
             'pftype': self.PFTYPE[dtype],
             'dwidth_i': dsize,
@@ -114,10 +110,10 @@ class PTXMatMul(MatMul):
                 cfg = self._sparse_args(tpl, params, block, dtype, dsize,
                                         base_args, base_meta)
             case 'dense':
-                cfg = self._dense_args(kernel_cfg, params, cc, smem_info,
-                                       base_args, base_meta)
+                cfg = self._dense_args(kernel_cfg, params, cc, base_args,
+                                       base_meta)
             case 'dense-ws':
-                cfg = self._dense_ws_args(kernel_cfg, params, cc, smem_info,
+                cfg = self._dense_ws_args(kernel_cfg, params, cc, smem_max,
                                           base_args, base_meta)
             case _:
                 raise ValueError(f'Unknown PTX template family for {tpl}')
@@ -126,33 +122,31 @@ class PTXMatMul(MatMul):
 
     def _sparse_args(self, tpl, params, block, dtype, dsize, args, meta):
         blockx = block[0]
-        args |= {'has_zero_rows': bool(self.has_zero_rows),
-                 'row_nz': [[(kx, self.A[j, kx]) for kx in range(self.k)
-                     if self.A[j, kx] != 0] for j in range(self.m)],
-                 'preload_c': bool(params.get('preload_c', False)),
-                }
+        args |= {
+            'has_zero_rows': bool(self.has_zero_rows),
+            'row_nz': [[(c, r[c]) for c in np.nonzero(r)[0]] for r in self.A],
+        }
 
         match tpl:
             case 'cstream' | 'bstream':
                 pass
             case 'bstream-msplit' | 'bstream-msplit-v2':
                 bsz = params['bsz']
-                args |= {'msplit': block[1], 'bsz': bsz, 'blockx': blockx}
+                args |= {'msplit': block[1], 'bsz': bsz, 'blockx': blockx,
+                         'preload_c': bool(params.get('preload_c', False))}
                 meta['shared'] = 2*bsz*blockx*dsize*args['width']
             case 'cstream-ksplit' | 'cstream-ksplit-v2':
                 csz = params['csz']
-                args |= {'ksplit': block[1], 'csz': csz, 'blockx': blockx}
+                args |= {'ksplit': block[1], 'csz': csz, 'blockx': blockx,
+                         'preload_c': bool(params.get('preload_c', False))}
                 meta['shared'] = (block[1] - 1)*csz*blockx*dsize*args['width']
             case _:
                 args['blockx'] = blockx
         return tpl, args, meta
 
-    def _dense_args(self, kernel_cfg, params, cc, smem_info, args, meta):
-        tpl = kernel_cfg['template']
-        nn = params['nn']
-        warps = params['warps']
-        tile = kernel_cfg['tile']
-        width = kernel_cfg['width']
+    def _dense_args(self, kernel_cfg, params, cc, args, meta):
+        tpl, tile = kernel_cfg['template'], kernel_cfg['tile']
+        nn, warps, width = params['nn'], params['warps'], kernel_cfg['width']
 
         setup = self._dense_common(nn, warps, tile, cc, width)
         if setup is None:
@@ -160,38 +154,27 @@ class PTXMatMul(MatMul):
 
         args |= setup
         if tpl.startswith('dmma-asmem'):
-            args |= {
-                'a_copy_threads': 32 * warps,
-                'block_stealing': bool(params.get('block_stealing', False)),
-            }
+            args |= {'a_copy_threads': 32*warps,
+                     'block_stealing': bool(params['block_stealing'])}
         meta['grid'] = (-(-self.n // setup['n_per_cta']), 1, 1)
 
-        if (msplit := params.get('msplit')) is None:
+        msplit = params.get('msplit')
+        if msplit is None:
             return tpl, args, meta
 
         n_per_cta = setup['n_per_cta']
-        k_pad = setup['k_tiles'] * setup['tile_k']
-        b_tile_bytes = k_pad * n_per_cta * args['dwidth_i']
-
-        offsets, dynm_total_bytes = self._dsmem_alloc(
-            [('b', b_tile_bytes)], ('tma',)
-        )
-        if dynm_total_bytes > smem_info[1]:
-            return None
+        k_pad = setup['k_tiles']*setup['tile_k']
+        b_tile_bytes = k_pad*n_per_cta*args['dwidth_i']
 
         args |= {
             'msplit': msplit,
             'b_tile_bytes': b_tile_bytes,
-            'b_smem_kiter_stride': (setup['tile_k'] * n_per_cta
-                                    * args['dwidth_i']),
-            'b_smem_kgroup_stride': 4 * n_per_cta * args['dwidth_i'],
-            'b_smem_ntile_stride': setup['tile_n'] * args['dwidth_i'],
-            'blockx_total': 32 * warps * msplit,
-        } | offsets
-        meta |= {
-            'ws_b_tile': (n_per_cta, k_pad),
-            'dynamic_shared': dynm_total_bytes,
+            'b_smem_kiter_stride': setup['tile_k']*n_per_cta*args['dwidth_i'],
+            'b_smem_kgroup_stride': 4*n_per_cta*args['dwidth_i'],
+            'b_smem_ntile_stride': setup['tile_n']*args['dwidth_i'],
+            'blockx_total': 32*warps*msplit,
         }
+        meta['ws_b_tile'] = (n_per_cta, k_pad)
 
         return tpl, args, meta
 
@@ -200,16 +183,16 @@ class PTXMatMul(MatMul):
         ptx_shape = f'm{tile_m}n{tile_n}k{tile_k}'
 
         m_groups, k_groups = tile_m // 8, tile_k // 4
-        a_regs = m_groups * k_groups
+        a_regs = m_groups*k_groups
         b_regs = k_groups
-        c_regs = 2 * m_groups
+        c_regs = 2*m_groups
 
         a = self.A
         m, k = a.shape
         m_tiles, k_tiles = -(-m // tile_m), -(-k // tile_k)
         k_rem = k % tile_k
-        n_per_warp = tile_n * nn
-        n_per_cta = warps_per_cta * n_per_warp
+        n_per_warp = tile_n*nn
+        n_per_cta = warps_per_cta*n_per_warp
 
         if n_per_cta > self.n:
             return None
@@ -225,7 +208,21 @@ class PTXMatMul(MatMul):
         a_pad[:m, :k] = a
         tile_shape = m_tiles, m_groups, 8, k_tiles, k_groups, 4
         tile_order = 0, 3, 4, 1, 2, 5
-        a_tiles = a_pad.reshape(*tile_shape).transpose(*tile_order).ravel()
+        a_frags = (a_pad.reshape(*tile_shape).transpose(*tile_order)
+                   .reshape(m_tiles*k_tiles, tile_m*tile_k))
+
+        # All-zero (mt, kt) tiles contribute nothing; elide them from the
+        # packed A array and let templates skip their loads and MMAs.
+        tile_nz = np.any(a_frags != 0, axis=1)
+        if not tile_nz.any():
+            tile_nz[0] = True
+        cidx = np.cumsum(tile_nz) - 1
+        a_tile_nz = [[bool(tile_nz[mt*k_tiles + kt])
+                      for kt in range(k_tiles)] for mt in range(m_tiles)]
+        a_tile_idx = [[int(cidx[mt*k_tiles + kt])
+                       for kt in range(k_tiles)] for mt in range(m_tiles)]
+
+        a_tiles = a_frags[tile_nz].ravel()
         a_u64 = [f'0x{u:016x}' for u in a_tiles.view(np.uint64)]
 
         # Predicate-elision flags
@@ -243,7 +240,9 @@ class PTXMatMul(MatMul):
             'a_regs': a_regs,
             'b_regs': b_regs,
             'c_regs': c_regs,
-            'a_elems': m_tiles * k_tiles * tile_m * tile_k,
+            'a_elems': a_tiles.size,
+            'a_tile_nz': a_tile_nz,
+            'a_tile_idx': a_tile_idx,
             'nn': nn,
             'm_tiles': m_tiles,
             'k_tiles': k_tiles,
@@ -251,19 +250,18 @@ class PTXMatMul(MatMul):
             'a_u64': a_u64,
             'n_per_warp': n_per_warp,
             'n_per_cta': n_per_cta,
-            'frag_stride_bytes': 8 * tile_m * tile_k,
-            'b_kiter_stride': 8 * tile_k * (self.ldb or 0),
-            'b_kgroup_stride': 32 * (self.ldb or 0),
-            'b_ntile_stride': 8 * tile_n,
-            'c_mtile_stride': 8 * tile_m * (self.ldc or 0),
-            'c_mgroup_stride': 64 * (self.ldc or 0),
-            'c_ntile_stride': 8 * tile_n,
+            'frag_stride_bytes': 8*tile_m*tile_k,
+            'b_kiter_stride': 8*tile_k*(self.ldb or 0),
+            'b_kgroup_stride': 32*(self.ldb or 0),
+            'b_ntile_stride': 8*tile_n,
+            'c_mtile_stride': 8*tile_m*(self.ldc or 0),
+            'c_mgroup_stride': 64*(self.ldc or 0),
+            'c_ntile_stride': 8*tile_n,
             'n_col_aligned': n_col_aligned,
             'pm_runtime': pm_runtime,
         }
 
-    def _dense_ws_args(self, kernel_cfg, params, cc, smem_info, args, meta):
-        dynamic_max = smem_info[1]
+    def _dense_ws_args(self, kernel_cfg, params, cc, smem_max, args, meta):
         tpl = kernel_cfg['template']
         nn = params['nn']
         tile = kernel_cfg['tile']
@@ -286,36 +284,42 @@ class PTXMatMul(MatMul):
             return None
 
         n_per_cta = setup['n_per_cta']
-        m_pad = setup['m_tiles'] * setup['tile_m']
-        k_pad = setup['k_tiles'] * setup['tile_k']
-        b_tile_bytes = 8 * k_pad * n_per_cta
-        c_tile_bytes = 8 * m_pad * n_per_cta
-        a_bytes = 8 * setup['a_elems']
-        regions = [('b1', b_tile_bytes), ('b2', b_tile_bytes),
-                   ('c', c_tile_bytes), ('a', a_bytes)]
+        m_pad = setup['m_tiles']*setup['tile_m']
+        k_pad = setup['k_tiles']*setup['tile_k']
+        b_tile_bytes = 8*k_pad*n_per_cta
+        c_tile_bytes = 8*m_pad*n_per_cta
+        a_bytes = 8*setup['a_elems']
+
+        if smem_max is not None:
+            match tpl:
+                case 'dmma-steal-ws':
+                    smem_est = 2*b_tile_bytes + a_bytes + 16 + 7*8
+                case 'dmma-stride-ws':
+                    smem_est = 2*b_tile_bytes + a_bytes + 5*8
+            if self.beta != 0:
+                smem_est += c_tile_bytes
+            if smem_est > smem_max:
+                return None
+
         ws_setup = {
             'n_comp_warps': n_comp_warps,
-            'blockx_total': 32 * (n_comp_warps + service_warps),
+            'blockx_total': 32*(n_comp_warps + service_warps),
             'prod_warp': warp_map['producer'],
-            'comp_threads': 32 * n_comp_warps,
+            'comp_threads': 32*n_comp_warps,
             'b_tile_bytes': b_tile_bytes,
-            'c_mtile_smem_stride': 8 * setup['tile_m'] * n_per_cta,
-            'c_mgroup_smem_stride': 64 * n_per_cta,
-            'c_ntile_smem_stride': 8 * setup['tile_n'],
+            'c_mtile_smem_stride': 8*setup['tile_m']*n_per_cta,
+            'c_mgroup_smem_stride': 64*n_per_cta,
+            'c_ntile_smem_stride': 8*setup['tile_n'],
         }
 
         match tpl:
             case 'dmma-steal-ws':
-                regions.append(('wid', 16))
-                mbars = ('tma', 'bready', 'cready', 'cstored',
-                         'steal', 'wid_new', 'wid_used')
                 grid = (-(-self.n // n_per_cta), 1, 1)
                 ws_setup['steal_warp'] = warp_map['stealer']
             case 'dmma-stride-ws':
                 stride_iters = params['iters']
                 work_blocks = -(-self.n // n_per_cta)
                 grid_stride = -(-work_blocks // stride_iters)
-                mbars = ('tma', 'bready', 'bconsumed', 'cready', 'cstored')
                 grid = (grid_stride, 1, 1)
                 ws_setup |= {
                     'stride_iters': stride_iters,
@@ -323,22 +327,17 @@ class PTXMatMul(MatMul):
                     'work_blocks': work_blocks,
                 }
 
-        offsets, dynm_total_bytes = self._dsmem_alloc(regions, mbars)
-        if dynm_total_bytes > dynamic_max:
-            return None
-
-        args |= setup | ws_setup | offsets
+        args |= setup | ws_setup
         meta |= {
             'grid': grid,
             'ws_b_tile': (n_per_cta, k_pad),
-            'dynamic_shared': dynm_total_bytes,
         }
         if self.beta != 0:
             meta['ws_out_tile'] = (n_per_cta, m_pad)
 
         return tpl, args, meta
 
-    def _usable_config(self, kernel_cfg, dtype, cc, smem_info):
+    def _usable_config(self, kernel_cfg, dtype, cc):
         family = kernel_cfg['family']
 
         if family == 'sparse' and not self.is_sparse_suitable(self.A, cc):
@@ -352,15 +351,14 @@ class PTXMatMul(MatMul):
         if condition is None:
             return True
         else:
-            stats = self._matmul_stats(dtype, cc, smem_info)
+            stats = self._matmul_stats(dtype, cc)
             return self._eval_condition(condition, stats)
 
     def _platform_config(self, dtype, cc):
-        cc = cc or (0, 0)
-        key = f'sm{cc[0]}{cc[1]}_{dtype}'
+        key = f'sm{cc[0]}{cc[1]}_{dtype}' if cc else f'default_{dtype}'
         return self._get_config(key)
 
-    def _matmul_stats(self, dtype, cc, smem_info):
+    def _matmul_stats(self, dtype, cc):
         nnz = np.count_nonzero(self.A)
         return {
             'dtype': dtype,
@@ -375,24 +373,7 @@ class PTXMatMul(MatMul):
             'unique_abs': len(np.unique(np.abs(self.A))),
             'k_used': len(self.bix),
             'cc': list(cc),
-            'smem_static': smem_info[0],
-            'smem_dynamic': smem_info[1],
         }
-
-    @staticmethod
-    def _dsmem_alloc(regions, mbars, align=16):
-        # For a set of regions and mbars and there sizes, work out dynamic
-        # shared memory pointers offset for a given alignemnt.
-        out, off = {}, 0
-        for name, size in regions:
-            off = (off + align - 1) & ~(align - 1)
-            out[f'{name}_off'] = off
-            off += size
-        for name in mbars:
-            out[f'{name}_mbar_off'] = off
-            off += 8
-        total = (off + align - 1) & ~(align - 1)
-        return out, total
 
     @staticmethod
     def _reg_list(prefix, n):
@@ -400,7 +381,7 @@ class PTXMatMul(MatMul):
         return f'{{{regs}}}'
 
     @staticmethod
-    def _pred_emit(instr, *preds, pred_reg=None, indent=8 * ' '):
+    def _pred_emit(instr, *preds, pred_reg=None, indent=8*' '):
         # Handle whether an instruction needs a predicate or not
         actual = [p for p in preds if p is not None]
         if not actual:
