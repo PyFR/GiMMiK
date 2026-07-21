@@ -53,22 +53,4 @@ nt_load(const ${dtype}* p)
 % endif
 }
 
-static inline __device__ void
-store_c(${dtype}* p, ${dtype} v)
-{
-    nt_store(p, v);
-}
-
-static inline __device__ ${dtype}
-load_c(const ${dtype}* p)
-{
-    return nt_load(p);
-}
-
-static inline __device__ ${dtype}
-load_b(const ${dtype}* p)
-{
-    return nt_load(p);
-}
-
 ${next.body()}

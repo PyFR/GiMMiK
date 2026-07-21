@@ -45,28 +45,19 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         % endif
       % endfor
       <%
-      nzixs = [(l_idx, kbx[l_idx]) for l_idx in A[j, kbx].nonzero()[0]]
+      nzixs = A[j, kbx].nonzero()[0]
+      terms = (f"{A[j, kbx[i]]}*bv[{i}]" for i in nzixs)
+      dotex = ' + '.join(terms) or 'make_zero()'
       has_dotp = A[j].any()
-      if nzixs:
-          first_l_idx, first_kx = nzixs[0]
-          dotex = f"{A[j, first_kx]}*bv[{first_l_idx}]"
-          for l_idx, kx in nzixs[1:]:
-              dotex = f"{dotex} + {A[j, kx]}*bv[{l_idx}]"
-      else:
-          dotex = 'make_zero()'
       %>
         dotp = ${dotex};
       ## Save to a register
       % if loop.index % ksplit == bid:
-        % if preload and beta == 0:
-        cv[${loop.index // ksplit}] = dotp;
-        % elif preload and beta == 1 and has_dotp:
-        cv[${loop.index // ksplit}] = load_c(&c[i + ${j}*ldc]);
-        cv[${loop.index // ksplit}] += dotp;
-        % elif preload and has_dotp:
-        cv[${loop.index // ksplit}] = ${beta}*load_c(&c[i + ${j}*ldc]);
-        cv[${loop.index // ksplit}] += dotp;
-        % elif not preload:
+        % if preload and has_dotp and beta == 1:
+        cv[${loop.index // ksplit}] = nt_load(&c[i + ${j}*ldc]) + dotp;
+        % elif preload and has_dotp and beta != 0:
+        cv[${loop.index // ksplit}] = ${beta}*nt_load(&c[i + ${j}*ldc]) + dotp;
+        % elif not preload or beta == 0:
         cv[${loop.index // ksplit}] = dotp;
         % endif
       ## Save to shared memory
@@ -92,24 +83,24 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         %>
         % if preload and beta == 0:
         dotp = ${sum_expr};
-        store_c(&c[i + ${j}*ldc], dotp);
+        nt_store(&c[i + ${j}*ldc], dotp);
         % elif preload and beta == 1 and has_dotp:
         dotp = ${sum_expr};
-        store_c(&c[i + ${j}*ldc], dotp);
+        nt_store(&c[i + ${j}*ldc], dotp);
         % elif preload and beta != 1 and has_dotp:
         dotp = ${sum_expr};
-        store_c(&c[i + ${j}*ldc], dotp);
+        nt_store(&c[i + ${j}*ldc], dotp);
         % elif preload and beta != 1:
-        store_c(&c[i + ${j}*ldc], ${beta}*load_c(&c[i + ${j}*ldc]));
+        nt_store(&c[i + ${j}*ldc], ${beta}*nt_load(&c[i + ${j}*ldc]));
         % elif beta == 0:
         dotp = ${sum_expr};
-        store_c(&c[i + ${j}*ldc], dotp);
+        nt_store(&c[i + ${j}*ldc], dotp);
         % elif beta == 1:
         dotp = ${sum_expr};
-        store_c(&c[i + ${j}*ldc], load_c(&c[i + ${j}*ldc]) + dotp);
+        nt_store(&c[i + ${j}*ldc], nt_load(&c[i + ${j}*ldc]) + dotp);
         % else:
         dotp = ${sum_expr};
-        store_c(&c[i + ${j}*ldc], dotp + ${beta}*load_c(&c[i + ${j}*ldc]));
+        nt_store(&c[i + ${j}*ldc], dotp + ${beta}*nt_load(&c[i + ${j}*ldc]));
         % endif
       % endif
     % endfor

@@ -30,31 +30,29 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 ## Preload C values for rows which will receive a non-zero dot product
 % for j, jx in enumerate(afix):
   % if jx != -1:
-        csub[${j}] = ${'' if beta == 1 else f'{beta}*'}load_c(&c[i + ${j}*ldc]);
+        csub[${j}] = nt_load(&c[i + ${j}*ldc]);
   % endif
 % endfor
 % endif
 
 ## Iterate through the used rows of B
 % for kx in bix:
-        bv = load_b(&b[i + ${kx}*ldb]);
+        bv = nt_load(&b[i + ${kx}*ldb]);
   % for j, jx in enumerate(A[:, kx]):
-    % if preload and beta != 0 and jx != 0:
-        csub[${j}] += ${jx}*bv;
-    % elif jx != 0 and kx == afix[j]:
+    % if jx != 0 and kx == afix[j] and preload and beta != 0 and beta != 1:
+        csub[${j}] = ${beta}*csub[${j}] + ${jx}*bv;
+    % elif jx != 0 and kx == afix[j] and not (preload and beta != 0):
         csub[${j}] = ${jx}*bv;
     % elif jx != 0:
         csub[${j}] += ${jx}*bv;
     % endif
     ##
-    % if preload and kx == alix[j]:
-        store_c(&c[i + ${j}*ldc], csub[${j}]);
-    % elif kx == alix[j] and beta == 0:
-        store_c(&c[i + ${j}*ldc], csub[${j}]);
+    % if kx == alix[j] and (preload or beta == 0):
+        nt_store(&c[i + ${j}*ldc], csub[${j}]);
     % elif kx == alix[j] and beta == 1:
-        store_c(&c[i + ${j}*ldc], load_c(&c[i + ${j}*ldc]) + csub[${j}]);
+        nt_store(&c[i + ${j}*ldc], nt_load(&c[i + ${j}*ldc]) + csub[${j}]);
     % elif kx == alix[j]:
-        store_c(&c[i + ${j}*ldc], csub[${j}] + ${beta}*load_c(&c[i + ${j}*ldc]));
+        nt_store(&c[i + ${j}*ldc], csub[${j}] + ${beta}*nt_load(&c[i + ${j}*ldc]));
     % endif
   % endfor
 % endfor
@@ -62,9 +60,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 ## Handle rows of A which are all zero
 % for j, jx in enumerate(afix):
   % if jx == -1 and beta == 0:
-        store_c(&c[i + ${j}*ldc], make_zero());
+        nt_store(&c[i + ${j}*ldc], make_zero());
   % elif jx == -1 and beta != 1:
-        store_c(&c[i + ${j}*ldc], ${beta}*load_c(&c[i + ${j}*ldc]));
+        nt_store(&c[i + ${j}*ldc], ${beta}*nt_load(&c[i + ${j}*ldc]));
   % endif
 % endfor
     }

@@ -35,7 +35,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     {
   % for kx in bchunks[0]:
     % if loop.index % msplit == cid:
-        bsub[0][${loop.index}][threadIdx.x] = load_b(&b[i + ${kx}*ldb]);
+        bsub[0][${loop.index}][threadIdx.x] = nt_load(&b[i + ${kx}*ldb]);
     % endif
   % endfor
 
@@ -43,7 +43,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
   ## Preload C values for active rows owned by this m-split lane
   % for j, jx in enumerate(mx[cid]):
     % if afix[jx] != -1:
-        csub[${j}] = ${'' if beta == 1 else f'{beta}*'}load_c(&c[i + ${jx}*ldc]);
+        csub[${j}] = nt_load(&c[i + ${jx}*ldc]);
     % endif
   % endfor
   % endif
@@ -61,7 +61,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % if not loop.parent.last:
       % for kx in bchunks[bb + 1]:
         % if loop.index % msplit == cid:
-        bsub[${(bb + 1) % 2}][${loop.index}][threadIdx.x] = load_b(&b[i + ${kx}*ldb]);
+        bsub[${(bb + 1) % 2}][${loop.index}][threadIdx.x] = nt_load(&b[i + ${kx}*ldb]);
         % endif
       % endfor
     % endif
@@ -69,22 +69,20 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % for kx in bchunks[bb]:
         bv = bsub[${bb % 2}][${loop.index}][threadIdx.x];
       % for j, jx in enumerate(A[mcx, kx]):
-        % if preload and beta != 0 and jx != 0:
-        csub[${j}] += ${jx}*bv;
-        % elif jx != 0 and kx == afix[mcx[j]]:
+        % if jx != 0 and kx == afix[mcx[j]] and preload and beta != 0 and beta != 1:
+        csub[${j}] = ${beta}*csub[${j}] + ${jx}*bv;
+        % elif jx != 0 and kx == afix[mcx[j]] and not (preload and beta != 0):
         csub[${j}] = ${jx}*bv;
         % elif jx != 0:
         csub[${j}] += ${jx}*bv;
         % endif
         ## If we're done with this dot product then store to global
-        % if preload and kx == alix[mcx[j]]:
-        store_c(&c[i + ${mcx[j]}*ldc], csub[${j}]);
-        % elif kx == alix[mcx[j]] and beta == 0:
-        store_c(&c[i + ${mcx[j]}*ldc], csub[${j}]);
+        % if kx == alix[mcx[j]] and (preload or beta == 0):
+        nt_store(&c[i + ${mcx[j]}*ldc], csub[${j}]);
         % elif kx == alix[mcx[j]] and beta == 1:
-        store_c(&c[i + ${mcx[j]}*ldc], load_c(&c[i + ${mcx[j]}*ldc]) + csub[${j}]);
+        nt_store(&c[i + ${mcx[j]}*ldc], nt_load(&c[i + ${mcx[j]}*ldc]) + csub[${j}]);
         % elif kx == alix[mcx[j]]:
-        store_c(&c[i + ${mcx[j]}*ldc], csub[${j}] + ${beta}*load_c(&c[i + ${mcx[j]}*ldc]));
+        nt_store(&c[i + ${mcx[j]}*ldc], csub[${j}] + ${beta}*nt_load(&c[i + ${mcx[j]}*ldc]));
         % endif
       % endfor
     % endfor
@@ -92,9 +90,9 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     % if loop.parent.last:
       % for j, jx in enumerate(afix):
         % if jx == -1 and j % msplit == cid and beta == 0:
-        store_c(&c[i + ${j}*ldc], make_zero());
+        nt_store(&c[i + ${j}*ldc], make_zero());
         % elif jx == -1 and j % msplit == cid and beta != 1:
-        store_c(&c[i + ${j}*ldc], ${beta}*load_c(&c[i + ${j}*ldc]));
+        nt_store(&c[i + ${j}*ldc], ${beta}*nt_load(&c[i + ${j}*ldc]));
         % endif
       % endfor
     % endif
