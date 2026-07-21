@@ -1,15 +1,17 @@
 <%inherit file='base'/>
 
-<% ksplit = 2 if m < 36 else 1 %>
+<%
+preload = context.get('preload', False)
+%>
 
-__global__ __launch_bounds__(128) void
+__global__ __launch_bounds__(${blockx}) void
 % if n is None:
 ${kname}(int n,
          const ${dtype}* __restrict__ b, int ldb,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -26,17 +28,34 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     if (i < n)
     {
 % for j, jx in enumerate(A):
-  % if (dotex := dot(lambda kx: f'b[i + {kx}*ldb]', jx, maxsplit=ksplit)) != '0.0':
+  <%
+  nzixs = [kx for kx, val in enumerate(jx) if val != 0]
+  terms = (f"{jx[kx]}*b[i + {kx}*ldb]" for kx in nzixs)
+  dotex = ' + '.join(terms) or 'make_zero()'
+  %>
         dotp = ${dotex};
+  % if preload and nzixs:
+    % if beta == 0:
+        nt_store(&c[i + ${j}*ldc], dotp);
+    % elif beta == 1:
+        dotp = nt_load(&c[i + ${j}*ldc]) + dotp;
+        nt_store(&c[i + ${j}*ldc], dotp);
+    % else:
+        dotp = ${beta}*nt_load(&c[i + ${j}*ldc]) + dotp;
+        nt_store(&c[i + ${j}*ldc], dotp);
+    % endif
+  % elif preload:
+    % if beta == 0:
+        nt_store(&c[i + ${j}*ldc], make_zero());
+    % elif beta != 1:
+        nt_store(&c[i + ${j}*ldc], ${beta}*nt_load(&c[i + ${j}*ldc]));
+    % endif
+  % elif beta == 0:
+        nt_store(&c[i + ${j}*ldc], dotp);
+  % elif beta == 1 and nzixs:
+        nt_store(&c[i + ${j}*ldc], nt_load(&c[i + ${j}*ldc]) + dotp);
   % else:
-        dotp = make_zero();
-  % endif
-  % if beta == 0:
-        c[i + ${j}*ldc] = dotp;
-  % elif beta == 1 and dotex != '0.0':
-        c[i + ${j}*ldc] += dotp;
-  % else:
-        c[i + ${j}*ldc] = dotp + ${beta}*c[i + ${j}*ldc];
+        nt_store(&c[i + ${j}*ldc], dotp + ${beta}*nt_load(&c[i + ${j}*ldc]));
   % endif
 % endfor
     }

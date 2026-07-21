@@ -4,6 +4,7 @@
 kparts = partition(A, ksplit, by='cols')
 cchunks = chunk(range(m), csz)
 loaded = set()
+preload = context.get('preload', False)
 %>
 
 __global__ __launch_bounds__(${blockx*ksplit}) void
@@ -13,7 +14,7 @@ ${kname}(int n,
          ${dtype}* __restrict__ c, int ldc)
 {
   % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
+    n = (n + ${width} - 1) / ${width};
     ldb /= ${width};
     ldc /= ${width};
   % endif
@@ -43,14 +44,22 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         bv[${loop.index}] = b[i + ${kx}*ldb]; <% loaded.add(kx) %>
         % endif
       % endfor
-      % if (dotex := dot(lambda kx: f'bv[{kx}]', A[j, kbx])) != '0.0':
+      <%
+      nzixs = A[j, kbx].nonzero()[0]
+      terms = (f"{A[j, kbx[i]]}*bv[{i}]" for i in nzixs)
+      dotex = ' + '.join(terms) or 'make_zero()'
+      has_dotp = A[j].any()
+      %>
         dotp = ${dotex};
-      % else:
-        dotp = make_zero();
-      % endif
       ## Save to a register
       % if loop.index % ksplit == bid:
+        % if preload and has_dotp and beta == 1:
+        cv[${loop.index // ksplit}] = nt_load(&c[i + ${j}*ldc]) + dotp;
+        % elif preload and has_dotp and beta != 0:
+        cv[${loop.index // ksplit}] = ${beta}*nt_load(&c[i + ${j}*ldc]) + dotp;
+        % elif not preload or beta == 0:
         cv[${loop.index // ksplit}] = dotp;
+        % endif
       ## Save to shared memory
       % else:
         csub[${bid - (bid > loop.index % ksplit)}][${loop.index}][threadIdx.x] = dotp;
@@ -66,14 +75,32 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
     ## Sum and output the final set of dot products
     % for j in cchunk:
       % if loop.index % ksplit == bid:
-        dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][threadIdx.x]'
-                                                          for i in range(ksplit - 1))};
-        % if beta == 0:
-        c[i + ${j}*ldc] = dotp;
+        <% has_dotp = A[j].any() %>
+        <%
+        sum_expr = f"cv[{loop.index // ksplit}]"
+        for s_idx in range(ksplit - 1):
+            sum_expr = f"{sum_expr} + csub[{s_idx}][{loop.index}][threadIdx.x]"
+        %>
+        % if preload and beta == 0:
+        dotp = ${sum_expr};
+        nt_store(&c[i + ${j}*ldc], dotp);
+        % elif preload and beta == 1 and has_dotp:
+        dotp = ${sum_expr};
+        nt_store(&c[i + ${j}*ldc], dotp);
+        % elif preload and beta != 1 and has_dotp:
+        dotp = ${sum_expr};
+        nt_store(&c[i + ${j}*ldc], dotp);
+        % elif preload and beta != 1:
+        nt_store(&c[i + ${j}*ldc], ${beta}*nt_load(&c[i + ${j}*ldc]));
+        % elif beta == 0:
+        dotp = ${sum_expr};
+        nt_store(&c[i + ${j}*ldc], dotp);
         % elif beta == 1:
-        c[i + ${j}*ldc] += dotp;
+        dotp = ${sum_expr};
+        nt_store(&c[i + ${j}*ldc], nt_load(&c[i + ${j}*ldc]) + dotp);
         % else:
-        c[i + ${j}*ldc] = dotp + ${beta}*c[i + ${j}*ldc];
+        dotp = ${sum_expr};
+        nt_store(&c[i + ${j}*ldc], dotp + ${beta}*nt_load(&c[i + ${j}*ldc]));
         % endif
       % endif
     % endfor
