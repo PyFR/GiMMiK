@@ -2,10 +2,8 @@
 
 <%
 blockx = a_copy_threads
-a_pairs = a_elems // 2
-a_pairs_tail = a_elems % 2
-copy_v2_iters = (a_pairs + blockx - 1) // blockx
-bs = bool(block_stealing)
+a_pairs, a_pairs_tail = divmod(a_elems, 2)
+bs = block_stealing
 %>
 
 % if bs:
@@ -67,16 +65,12 @@ bs = bool(block_stealing)
         mov.u64 a_glb_base, ${kname}_Ag;
         cvta.to.global.u64 a_glb_base, a_glb_base;
         mov.u64 a_smem_base, ${kname}_As;
-% for ci in range(copy_v2_iters):
-<%
-    base_pair = ci * blockx
-    pairs_this = min(blockx, a_pairs - base_pair)
-%>
+% for base_pair in range(0, a_pairs, blockx):
         {
             .reg .u32 pidx;
             .reg .u64 off64, gaddr, saddr;
             .reg .${pftype} v0, v1;
-%  if loop.last and pairs_this < blockx:
+%  if loop.last and a_pairs - base_pair < blockx:
             .reg .pred plast;
             add.u32 pidx, tid, ${base_pair};
             setp.lt.u32 plast, pidx, ${a_pairs};

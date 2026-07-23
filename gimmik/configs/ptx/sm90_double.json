@@ -239,7 +239,8 @@
       "width": 2,
       "params": {
         "nn": 1,
-        "warps": 8
+        "warps": 8,
+        "block_stealing": false
       },
       "conditions": {
         "all": [
@@ -376,7 +377,8 @@
       "width": 2,
       "params": {
         "nn": 2,
-        "warps": 4
+        "warps": 4,
+        "block_stealing": false
       },
       "conditions": {
         "all": [

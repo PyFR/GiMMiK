@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import itertools as it
+from importlib import resources
 import json
 from pathlib import Path
 import pkgutil
@@ -152,9 +153,9 @@ class MatMul:
         try:
             return self._config_cache[key]
         except KeyError:
-            cfgdir = Path('configs') / self.platform
-            cfgdata = pkgutil.get_data('gimmik', str(cfgdir / f'{key}.json'))
-            self._config_cache[key] = json.loads(cfgdata.decode('utf-8'))
+            cfgpath = Path('configs') / self.platform / f'{key}.json'
+            cfgdata = (resources.files('gimmik') / cfgpath).read_text()
+            self._config_cache[key] = json.loads(cfgdata)
             return self._config_cache[key]
 
     def _eval_condition(self, condition, stats):
