@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import itertools as it
+from importlib import resources
+import json
+from pathlib import Path
 import pkgutil
 import re
 
@@ -54,6 +57,7 @@ def _chunk(l, chunksz):
 
 class MatMul:
     platform = None
+    _float_suffix = 'f'
 
     def __init__(self, A, beta=0.0, aligne=None, n=None, ldb=None, ldc=None):
         self.A = A
@@ -90,6 +94,9 @@ class MatMul:
         self.bix = np.nonzero(np.any(A != 0, axis=0))[0]
         self.bix = {kx: k for k, kx in enumerate(self.bix)}
 
+        # Create config cache
+        self._config_cache = {}
+
     def kernels(self, dtype, kname='gimmik_mm', **kwargs):
         basemeta = self.basemeta
 
@@ -103,14 +110,7 @@ class MatMul:
             raise ValueError('Invalid floating point data type')
 
         # Common template arguments
-        baseargs = {
-            'dtype': dtype, 'kname': kname,
-            'A': self.A, 'beta': self.beta, 'width': 1,
-            'm': self.m, 'n': self.n, 'k': self.k,
-            'ldb': self.ldb, 'ldc': self.ldc,
-            'afix': self.afix, 'alix': self.alix, 'bix': self.bix,
-            'dot': _dot, 'partition': _partition, 'chunk': _chunk
-        }
+        baseargs = self._base_template_args(dtype, kname)
 
         # Incrementally generate and render the kernels
         gen = self._kernel_generators(dtype, dsize, **kwargs)
@@ -136,17 +136,75 @@ class MatMul:
         except StopIteration:
             pass
 
+    def _base_template_args(self, dtype, kname):
+        return {
+            'dtype': dtype, 'kname': kname,
+            'A': self.A, 'beta': self.beta, 'width': 1,
+            'm': self.m, 'n': self.n, 'k': self.k,
+            'ldb': self.ldb, 'ldc': self.ldc,
+            'afix': self.afix, 'alix': self.alix, 'bix': self.bix,
+            'dot': _dot, 'partition': _partition, 'chunk': _chunk
+        }
+
     def _process_meta(self, meta):
         pass
+
+    def _get_config(self, key):
+        try:
+            return self._config_cache[key]
+        except KeyError:
+            cfgpath = Path('configs') / self.platform / f'{key}.json'
+            cfgdata = (resources.files('gimmik') / cfgpath).read_text()
+            self._config_cache[key] = json.loads(cfgdata)
+            return self._config_cache[key]
+
+    def _eval_condition(self, condition, stats):
+        if 'all' in condition:
+            return all(self._eval_condition(c, stats)
+                       for c in condition['all'])
+        if 'any' in condition:
+            return any(self._eval_condition(c, stats)
+                       for c in condition['any'])
+        if 'not' in condition:
+            return not self._eval_condition(condition['not'], stats)
+
+        value = stats[condition['field']]
+        op = next(k for k in condition if k != 'field')
+        expected = condition[op]
+
+        match op:
+            case 'eq':
+                return value == expected
+            case 'ne':
+                return value != expected
+            case 'lt':
+                return value is not None and value < expected
+            case 'lte':
+                return value is not None and value <= expected
+            case 'gt':
+                return value is not None and value > expected
+            case 'gte':
+                return value is not None and value >= expected
+            case 'in':
+                return value in expected
+            case 'is_null':
+                return value is None
+            case 'is_not':
+                return value is not None
+            case 'divisible_by':
+                return value is not None and value % expected == 0
+            case 'is_null_or_divisible_by':
+                return (value is None or value % expected == 0)
+            case _:
+                raise ValueError(f'op `{op}` not supported')
 
     def _render_kernel(self, dtype, tplname, tplargs):
         tpl = _PlatformTemplateLookup(self.platform).get_template(tplname)
         src = tpl.render(**tplargs)
 
-        # At single precision suffix all floating point constants by 'f'
-        if dtype == 'float':
+        if dtype == 'float' and self._float_suffix:
             src = re.sub(r'(?=\d*[.eE])(?=\.?\d)\d*\.?\d*(?:[eE][+-]?\d+)?',
-                         r'\g<0>f', src)
+                         rf'\g<0>{self._float_suffix}', src)
 
         # Cleanup
         src = re.sub(r'^\w+\n$', '', src.strip())
