@@ -9,6 +9,7 @@ from gimmik.hip import HIPMatMul
 from gimmik.metal import MetalMatMul
 from gimmik.opencl import OpenCLMatMul
 from gimmik.ptx import PTXMatMul
+from gimmik.sycl import SYCLMatMul
 
 
 def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm',
@@ -24,7 +25,8 @@ def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm',
         'ispc': ISPCMatMul,
         'hip': HIPMatMul,
         'opencl': OpenCLMatMul,
-        'ptx': PTXMatMul
+        'ptx': PTXMatMul,
+        'sycl': SYCLMatMul
     }
 
     mm = platmap[platform](alpha*mat, beta, None, n, ldb, ldc)

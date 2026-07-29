@@ -1,0 +1,4 @@
+build/
+vbuild/
+*.o
+*.bin
