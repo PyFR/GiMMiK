@@ -28,8 +28,8 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
     sycl::range<2> local(${ksplit}, ${blockx});
 
     return q.submit([&](sycl::handler& cgh) {
-        sycl::local_accessor<${dtype}, 3> csub(
-            sycl::range<3>(${ksplit - 1}, ${csz}, ${blockx}), cgh);
+        sycl::local_accessor<${dtype}, 1> csub(
+            sycl::range<1>(${(ksplit - 1) * csz * blockx}), cgh);
 
         cgh.parallel_for(sycl::nd_range<2>(global, local),
                          [=](sycl::nd_item<2> it) {
@@ -62,7 +62,7 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
             cv[${loop.index // ksplit}] = dotp;
       ## Save to shared memory
       % else:
-            csub[${bid - (bid > loop.index % ksplit)}][${loop.index}][lx] = dotp;
+            csub[${(bid - (bid > loop.index % ksplit)) * csz * blockx} + ${loop.index * blockx} + lx] = dotp;
       % endif
     % endfor
         }
@@ -75,7 +75,7 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
     ## Sum and output the final set of dot products
     % for j in cchunk:
       % if loop.index % ksplit == bid:
-            dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i}][{loop.index}][lx]'
+            dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i * csz * blockx + loop.index * blockx} + lx]'
                                                               for i in range(ksplit - 1))};
         % if beta == 0:
             c[i + ${j}*ldc] = dotp;

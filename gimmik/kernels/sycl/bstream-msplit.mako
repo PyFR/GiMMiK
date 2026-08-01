@@ -27,8 +27,8 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
     sycl::range<2> local(${msplit}, ${blockx});
 
     return q.submit([&](sycl::handler& cgh) {
-        sycl::local_accessor<${dtype}, 3> bsub(
-            sycl::range<3>(2, ${bsz}, ${blockx}), cgh);
+        sycl::local_accessor<${dtype}, 1> bsub(
+            sycl::range<1>(${2 * bsz * blockx}), cgh);
 
         cgh.parallel_for(sycl::nd_range<2>(global, local),
                          [=](sycl::nd_item<2> it) {
@@ -43,7 +43,7 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
         {
   % for kx in bchunks[0]:
     % if loop.index % msplit == cid:
-            bsub[0][${loop.index}][lx] = b[i + ${kx}*ldb];
+            bsub[${loop.index * blockx} + lx] = b[i + ${kx}*ldb];
     % endif
   % endfor
         }
@@ -60,13 +60,13 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
     % if not loop.parent.last:
       % for kx in bchunks[bb + 1]:
         % if loop.index % msplit == cid:
-            bsub[${(bb + 1) % 2}][${loop.index}][lx] = b[i + ${kx}*ldb];
+            bsub[${((bb + 1) % 2) * bsz * blockx + loop.index * blockx} + lx] = b[i + ${kx}*ldb];
         % endif
       % endfor
     % endif
     ## Accumulate our dot products
     % for kx in bchunks[bb]:
-            bv = bsub[${bb % 2}][${loop.index}][lx];
+            bv = bsub[${(bb % 2) * bsz * blockx + loop.index * blockx} + lx];
       % for j, jx in enumerate(A[mcx, kx]):
         % if jx != 0 and kx == afix[mcx[j]]:
             csub[${j}] = ${jx}*bv;
