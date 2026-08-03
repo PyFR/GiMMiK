@@ -21,7 +21,7 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict bp, ${dtype}* __restrict cp)
     const int gx = ((nw + ${blockx} - 1) / ${blockx}) * ${blockx};
     return q.parallel_for(
         sycl::nd_range<1>(sycl::range<1>(gx), sycl::range<1>(${blockx})),
-        [=](sycl::nd_item<1> it) {
+        [=](sycl::nd_item<1> it) [[sycl::reqd_work_group_size(${blockx})]] {
         const int i = it.get_global_id(0);
         if (i >= nw)
             return;

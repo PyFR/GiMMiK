@@ -31,7 +31,7 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
             sycl::range<1>(${2 * bsz * blockx}), cgh);
 
         cgh.parallel_for(sycl::nd_range<2>(global, local),
-                         [=](sycl::nd_item<2> it) {
+                         [=](sycl::nd_item<2> it) [[sycl::reqd_work_group_size(${msplit}, ${blockx})]] {
         const int i = it.get_global_id(1);
         const int lx = it.get_local_id(1), ly = it.get_local_id(0);
 
