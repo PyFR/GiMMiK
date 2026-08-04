@@ -293,7 +293,7 @@ class PTXMatMul(MatMul):
         if smem_max is not None:
             match tpl:
                 case 'dmma-steal-ws':
-                    smem_est = 2*b_tile_bytes + a_bytes + 16 + 7*8
+                    smem_est = 2*b_tile_bytes + a_bytes + 32 + 13*8
                 case 'dmma-stride-ws':
                     smem_est = 2*b_tile_bytes + a_bytes + 5*8
             if self.beta != 0:
