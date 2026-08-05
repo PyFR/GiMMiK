@@ -9,6 +9,7 @@ Produces, under bench/build/:
 """
 import json
 import os
+import shutil
 import sys
 
 import numpy as np
@@ -36,6 +37,9 @@ def main():
     k = int(os.environ.get('GMK_K', 48))
     n = int(os.environ.get('GMK_N', 200000))
     sparsity = float(os.environ.get('GMK_SPARSITY', 0.5))
+    beta = float(os.environ.get('GMK_BETA', 0.0))
+    aligne = os.environ.get('GMK_ALIGNE')
+    aligne = int(aligne) if aligne else None
 
     ldb = ldc = n
     A = make_operator(m, k, sparsity)
@@ -45,8 +49,11 @@ def main():
     B = rng.standard_normal((k, n))
     Cref = A @ B
 
-    os.makedirs(os.path.join(BUILD, 'ocl'), exist_ok=True)
-    os.makedirs(os.path.join(BUILD, 'sycl'), exist_ok=True)
+    # Wipe any kernels from a previous config so a stale *.cpp/*.cl (e.g. from
+    # a different beta/aligne) is never picked up by the build's glob.
+    for sub in ('ocl', 'sycl'):
+        shutil.rmtree(os.path.join(BUILD, sub), ignore_errors=True)
+        os.makedirs(os.path.join(BUILD, sub), exist_ok=True)
 
     B.astype('<f8').tofile(os.path.join(BUILD, 'B.bin'))
     Cref.astype('<f8').tofile(os.path.join(BUILD, 'Cref.bin'))
@@ -62,11 +69,12 @@ def main():
                 ('sycl', SYCLMatMul, 'sycl', 'cpp')]
 
     for plat, cls, subdir, ext in backends:
-        mm = cls(A, beta=0.0, n=n, ldb=ldb, ldc=ldc)
+        mm = cls(A, beta=beta, aligne=aligne, n=n, ldb=ldb, ldc=ldc)
         for idx, (src, meta) in enumerate(mm.kernels(np.float64, kname='gimmik_mm')):
             tpl = meta['tplname']
             width = meta['width']
-            entry = f'gmk_{plat}_{idx}_{tpl.replace("-", "_")}_w{width}'
+            pl = '_pl' if meta.get('preload') else ''
+            entry = f'gmk_{plat}_{idx}_{tpl.replace("-", "_")}_w{width}{pl}'
             src = src.replace('gimmik_mm', entry)
             fname = f'{entry}.{ext}'
             with open(os.path.join(BUILD, subdir, fname), 'w') as f:
@@ -115,15 +123,29 @@ def main():
         f.write('};\n')
         f.write(f'static const int g_ocl_n = {len(ocl)};\n')
 
-    # SYCL registry (declarations + function pointer table)
+    # SYCL registry (declarations + function pointer table).  Width>1 kernels
+    # take vector pointers (sycl::doubleW*), so wrap them in a uniform
+    # double* entry point that reinterpret_casts the buffers.
     with open(os.path.join(BUILD, 'sycl_registry.cpp'), 'w') as f:
         f.write('#include "sycl_common.hpp"\n')
         for x in scl:
-            f.write(f'sycl::event {x["entry"]}'
-                    f'(sycl::queue&, const double*, double*);\n')
+            w = x['width']
+            if w == 1:
+                f.write(f'sycl::event {x["entry"]}'
+                        f'(sycl::queue&, const double*, double*);\n')
+            else:
+                vt = f'sycl::double{w}'
+                f.write(f'sycl::event {x["entry"]}'
+                        f'(sycl::queue&, const {vt}*, {vt}*);\n')
+                f.write(f'static sycl::event {x["entry"]}_w'
+                        f'(sycl::queue& q, const double* b, double* c) {{\n'
+                        f'  return {x["entry"]}(q, '
+                        f'reinterpret_cast<const {vt}*>(b), '
+                        f'reinterpret_cast<{vt}*>(c));\n}}\n')
         f.write('const SyclKernel g_sycl[] = {\n')
         for x in scl:
-            f.write(f'  {{"{x["entry"]}", "{x["tpl"]}", &{x["entry"]}}},\n')
+            fn = x['entry'] if x['width'] == 1 else x['entry'] + '_w'
+            f.write(f'  {{"{x["entry"]}", "{x["tpl"]}", &{fn}}},\n')
         f.write('};\n')
         f.write(f'const int g_sycl_n = {len(scl)};\n')
 

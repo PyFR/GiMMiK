@@ -28,6 +28,9 @@ CASES = [
     ('float64', 0.5, 'static',  None),
     ('float64', 0.0, 'dynamic', None),
     ('float64', 0.5, 'dynamic', None),
+    ('float64', 0.0, 'static',  2),     # fp64 double2 vector kernels
+    ('float64', 0.5, 'static',  2),     # + preload-C candidates (beta != 0)
+    ('float64', 0.0, 'dynamic', 2),
     ('float32', 0.0, 'static',  None),
     ('float32', 0.5, 'static',  None),
     ('float32', 0.0, 'static',  2),     # enables float2 vector kernels
@@ -38,9 +41,10 @@ M, K, N = 32, 48, 8192   # N even & divisible by 64 for the split/vector kernels
 
 
 def elem_type(dtype, width):
+    base = 'float' if dtype == 'float32' else 'double'
     if width > 1:
-        return 'sycl::float2'
-    return 'float' if dtype == 'float32' else 'double'
+        return f'sycl::{base}{width}'
+    return base
 
 
 def main():

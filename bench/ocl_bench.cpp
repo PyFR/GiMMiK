@@ -41,6 +41,10 @@ static std::string read_text(const std::string& path) {
 }
 
 static cl_device_id pick_gpu(cl_platform_id* out_plat) {
+    // Vendor substring to match; override with GMK_OCL_VENDOR (default Intel).
+    const char* want = std::getenv("GMK_OCL_VENDOR");
+    if (!want || !*want) want = "Intel";
+
     cl_uint np = 0;
     CK(clGetPlatformIDs(0, nullptr, &np));
     std::vector<cl_platform_id> plats(np);
@@ -54,12 +58,12 @@ static cl_device_id pick_gpu(cl_platform_id* out_plat) {
         CK(clGetDeviceIDs(p, CL_DEVICE_TYPE_GPU, nd, devs.data(), nullptr));
         char vendor[256] = {0};
         clGetDeviceInfo(devs[0], CL_DEVICE_VENDOR, sizeof(vendor), vendor, nullptr);
-        if (std::strstr(vendor, "Intel") || std::strstr(vendor, "INTEL")) {
+        if (std::strstr(vendor, want)) {
             *out_plat = p;
             return devs[0];
         }
     }
-    std::fprintf(stderr, "No Intel GPU found\n");
+    std::fprintf(stderr, "No GPU with vendor matching '%s' found\n", want);
     std::exit(1);
 }
 
