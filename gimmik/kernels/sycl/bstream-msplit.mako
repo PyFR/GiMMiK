@@ -1,6 +1,7 @@
 <%
 mx = partition(A, into=msplit, by='rows')
 bchunks = chunk(bix, bsz)
+preload = context.get('preload', False)
 %>\
 #include <sycl/sycl.hpp>
 
@@ -46,6 +47,14 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
             bsub[${loop.index * blockx} + lx] = b[i + ${kx}*ldb];
     % endif
   % endfor
+  % if preload and beta != 0:
+    ## Preload C values for active rows owned by this m-split lane
+    % for j, jx in enumerate(mx[cid]):
+      % if afix[jx] != -1:
+            csub[${j}] = c[i + ${jx}*ldc];
+      % endif
+    % endfor
+  % endif
         }
 % endfor
         it.barrier(sycl::access::fence_space::local_space);
@@ -68,13 +77,15 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
     % for kx in bchunks[bb]:
             bv = bsub[${(bb % 2) * bsz * blockx + loop.index * blockx} + lx];
       % for j, jx in enumerate(A[mcx, kx]):
-        % if jx != 0 and kx == afix[mcx[j]]:
+        % if jx != 0 and kx == afix[mcx[j]] and preload and beta != 0 and beta != 1:
+            csub[${j}] = ${beta}*csub[${j}] + ${jx}*bv;
+        % elif jx != 0 and kx == afix[mcx[j]] and not (preload and beta != 0):
             csub[${j}] = ${jx}*bv;
         % elif jx != 0:
             csub[${j}] += ${jx}*bv;
         % endif
         ## If we're done with this dot product then store to global
-        % if kx == alix[mcx[j]] and beta == 0:
+        % if kx == alix[mcx[j]] and (preload or beta == 0):
             c[i + ${mcx[j]}*ldc] = csub[${j}];
         % elif kx == alix[mcx[j]] and beta == 1:
             c[i + ${mcx[j]}*ldc] += csub[${j}];

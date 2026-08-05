@@ -17,44 +17,56 @@ class SYCLMatMul(MatMul):
         # latency better than 128 on these bandwidth-bound kernels.
         sblkx = 256
 
-        # B loading, C streaming kernel
-        yield ('cstream', {'blockx': sblkx}, {'local_work_size': (sblkx,)})
+        # Consider a vector width of two whenever the leading dimension is
+        # suitably aligned.  Unlike CUDA the SYCL vector types (sycl::vec)
+        # provide native arithmetic operators, so width is a plain template
+        # knob shared by every kernel at both single and double precision.
+        widths = [1]
+        if self.aligne is not None and self.aligne % 2 == 0:
+            widths.append(2)
 
-        # B streaming, C accumulation kernel
-        yield ('bstream', {'blockx': sblkx}, {'local_work_size': (sblkx,)})
+        for width in widths:
+            if width > 1:
+                wargs = {'dtype': f'sycl::{dtype}{width}', 'width': width}
+                wmeta = {'width': width}
+            else:
+                wargs = wmeta = {}
 
-        # Four-way m-split B streaming, C accumulation kernel
-        ms, bsz, blkx = 4, 16, 64
-        args = {'msplit': ms, 'blockx': blkx, 'bsz': bsz}
-        meta = {'local_work_size': (blkx, ms),
-                'local_mem_size': 2*blkx*bsz*dsize}
-        if meta['local_mem_size'] < max_local_mem:
-            yield ('bstream-msplit', args, meta)
+            # B loading, C streaming kernel
+            yield ('cstream', {'blockx': sblkx} | wargs,
+                   {'local_work_size': (sblkx,)} | wmeta)
 
-        # Two-way k-split B loading, C streaming kernel
-        ks, csz, blkx = 2, 32, 64
-        args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
-        meta = {'local_work_size': (blkx, ks),
-                'local_mem_size': (ks - 1)*csz*blkx*dsize}
-        if meta['local_mem_size'] < max_local_mem:
-            yield ('cstream-ksplit', args, meta)
+            # B streaming, C accumulation kernel
+            yield ('bstream', {'blockx': sblkx} | wargs,
+                   {'local_work_size': (sblkx,)} | wmeta)
 
-        # At single precision also consider vectorized kernels
-        if (dtype == 'float' and
-                self.aligne is not None and self.aligne % 2 == 0):
-            # Vector B loading, C streaming kernel
-            args = {'dtype': 'sycl::float2', 'width': 2, 'blockx': sblkx}
-            meta = {'width': 2, 'local_work_size': (sblkx,)}
-            yield ('cstream', args, meta)
-
-            # Vector four-way m-split B streaming, C accumulation kernel
+            # Four-way m-split B streaming, C accumulation kernel
             ms, bsz, blkx = 4, 16, 64
-            args = {'dtype': 'sycl::float2', 'width': 2, 'msplit': ms,
-                    'blockx': blkx, 'bsz': bsz}
+            args = {'msplit': ms, 'blockx': blkx, 'bsz': bsz} | wargs
+            local_mem = 2*blkx*bsz*dsize*width
             meta = {'local_work_size': (blkx, ms),
-                    'local_mem_size': 2*blkx*bsz*dsize, 'width': 2}
-            if meta['local_mem_size'] < max_local_mem:
+                    'local_mem_size': local_mem} | wmeta
+            if local_mem < max_local_mem:
                 yield ('bstream-msplit', args, meta)
+
+                # Preloading C up-front only alters the beta != 0 path, so it
+                # is only worth emitting as an extra candidate there.
+                if self.beta != 0:
+                    yield ('bstream-msplit', args | {'preload': True},
+                           meta | {'preload': True})
+
+            # Two-way k-split B loading, C streaming kernel
+            ks, csz, blkx = 2, 32, 64
+            args = {'ksplit': ks, 'csz': csz, 'blockx': blkx} | wargs
+            local_mem = (ks - 1)*csz*blkx*dsize*width
+            meta = {'local_work_size': (blkx, ks),
+                    'local_mem_size': local_mem} | wmeta
+            if local_mem < max_local_mem:
+                yield ('cstream-ksplit', args, meta)
+
+                if self.beta != 0:
+                    yield ('cstream-ksplit', args | {'preload': True},
+                           meta | {'preload': True})
 
     def _process_meta(self, meta):
         if self.n is not None:

@@ -30,13 +30,21 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict bp, ${dtype}* __restrict cp)
         // lambda, so restore it on the pointers actually used in the body.
         const ${dtype}* __restrict b = bp;
         ${dtype}* __restrict c = cp;
+## Hoist every used row of B into a register up-front.  Each row of B feeds
+## multiple rows of C, so this load sharing is essential; relying on the
+## compiler to common up the repeated subscripts is unsafe as IGC does not
+## eliminate redundant vector-typed (width > 1) loads, which otherwise
+## reloads B once per non-zero and makes the kernel memory-bound.
+% for kx in bix:
+        const ${dtype} bv${kx} = b[i + ${kx}*ldb];
+% endfor
 % for j, jx in enumerate(A):
   % if beta == 0:
-        c[i + ${j}*ldc] = ${dot(lambda kx: f'b[i + {kx}*ldb]', jx)};
+        c[i + ${j}*ldc] = ${dot(lambda kx: f'bv{kx}', jx)};
   % elif beta == 1:
-        c[i + ${j}*ldc] += ${dot(lambda kx: f'b[i + {kx}*ldb]', jx)};
+        c[i + ${j}*ldc] += ${dot(lambda kx: f'bv{kx}', jx)};
   % else:
-        c[i + ${j}*ldc] = ${dot(lambda kx: f'b[i + {kx}*ldb]', jx)}
+        c[i + ${j}*ldc] = ${dot(lambda kx: f'bv{kx}', jx)}
                         + ${beta}*c[i + ${j}*ldc];
   % endif
 % endfor

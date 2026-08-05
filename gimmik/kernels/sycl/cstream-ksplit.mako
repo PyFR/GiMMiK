@@ -2,6 +2,7 @@
 kparts = partition(A, ksplit, by='cols')
 cchunks = chunk(range(m), csz)
 loaded = set()
+preload = context.get('preload', False)
 %>\
 #include <sycl/sycl.hpp>
 
@@ -57,9 +58,16 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
       % else:
             dotp = ${dtype}(0);
       % endif
+      <% has_dotp = A[j].any() %>
       ## Save to a register
       % if loop.index % ksplit == bid:
+        % if preload and has_dotp and beta == 1:
+            cv[${loop.index // ksplit}] = c[i + ${j}*ldc] + dotp;
+        % elif preload and has_dotp and beta != 0:
+            cv[${loop.index // ksplit}] = ${beta}*c[i + ${j}*ldc] + dotp;
+        % else:
             cv[${loop.index // ksplit}] = dotp;
+        % endif
       ## Save to shared memory
       % else:
             csub[${(bid - (bid > loop.index % ksplit)) * csz * blockx} + ${loop.index * blockx} + lx] = dotp;
@@ -75,14 +83,24 @@ ${kname}(sycl::queue& q, const ${dtype}* __restrict b, ${dtype}* __restrict c)
     ## Sum and output the final set of dot products
     % for j in cchunk:
       % if loop.index % ksplit == bid:
-            dotp = cv[${loop.index // ksplit}] + ${' + '.join(f'csub[{i * csz * blockx + loop.index * blockx} + lx]'
-                                                              for i in range(ksplit - 1))};
-        % if beta == 0:
-            c[i + ${j}*ldc] = dotp;
-        % elif beta == 1:
-            c[i + ${j}*ldc] += dotp;
-        % else:
-            c[i + ${j}*ldc] = dotp + ${beta}*c[i + ${j}*ldc];
+        <%
+        has_dotp = A[j].any()
+        sum_expr = ' + '.join([f'cv[{loop.index // ksplit}]'] +
+                              [f'csub[{i * csz * blockx + loop.index * blockx} + lx]'
+                               for i in range(ksplit - 1)])
+        %>
+        % if preload and beta == 0:
+            c[i + ${j}*ldc] = ${sum_expr};
+        % elif preload and has_dotp:
+            c[i + ${j}*ldc] = ${sum_expr};
+        % elif preload and beta != 1:
+            c[i + ${j}*ldc] = ${beta}*c[i + ${j}*ldc];
+        % elif not preload and beta == 0:
+            c[i + ${j}*ldc] = ${sum_expr};
+        % elif not preload and beta == 1:
+            c[i + ${j}*ldc] += ${sum_expr};
+        % elif not preload:
+            c[i + ${j}*ldc] = ${sum_expr} + ${beta}*c[i + ${j}*ldc];
         % endif
       % endif
     % endfor
