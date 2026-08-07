@@ -1,6 +1,12 @@
 GiMMiK
 ======
-Generator of Matrix Multiplication Kernels - GiMMiK - is a tool for generation of high performance matrix multiplication kernel code for various accelerator platforms. Currently C, CUDA, HIP, ISPC, Metal, and OpenCL are supported.
+Generator of Matrix Multiplication Kernels - GiMMiK - is a tool for generation of high performance matrix multiplication kernel code for various accelerator platforms. Currently C, CUDA, HIP, ISPC, Metal, OpenCL, and SYCL are supported.
+
+The SYCL backend (``platform='sycl'``) emits self-contained launcher functions of
+the form ``sycl::event kname(sycl::queue& q, ...)`` that submit the generated
+kernel to a queue, and can be compiled with any SYCL 2020 compiler (e.g. Intel
+oneAPI DPC++). See ``bench/`` for an OpenCL-vs-SYCL benchmark harness targeting
+Intel GPUs.
 
 What does GiMMiK do?
 --------------------
