@@ -1,27 +1,12 @@
+<%inherit file='base'/>
+
 <%
 kparts = partition(A, ksplit, by='cols')
 cchunks = chunk(range(m), csz)
 loaded = set()
 %>
 
-__kernel __attribute__((reqd_work_group_size(${blockx}, ${ksplit}, 1))) void
-% if n is None:
-${kname}(int n,
-         __global const ${dtype}* restrict b, int ldb,
-         __global ${dtype}* restrict c, int ldc)
-{
-  % if width > 1:
-    n = ((n + ${width} - 1) / ${width}) * ${width};
-    ldb /= ${width};
-    ldc /= ${width};
-  % endif
-% else:
-${kname}(__global const ${dtype}* restrict b, __global ${dtype}* restrict c)
-{
-    const int n = ${-(-n // width)};
-    const ${'long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
-    const ${'long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
-% endif
+${parent.prologue(wgs=(blockx, ksplit))}\
     int i = get_global_id(0);
     int lx = get_local_id(0), ly = get_local_id(1);
 

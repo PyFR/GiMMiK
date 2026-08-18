@@ -6,26 +6,8 @@ cchunks = chunk(range(m), csz)
 loaded = set()
 %>
 
-kernel void
-% if n is None:
-${kname}(constant int& n_,
-         device ${dtype}* b, constant int& ldb_,
-         device ${dtype}* c, constant int& ldc_,
-         uint2 tpig [[thread_position_in_grid]],
-         uint2 tpitg [[thread_position_in_threadgroup]])
-{
-    const int n = ((n_ + ${width} - 1) / ${width}) * ${width};
-    const int ldb = ldb_ / ${width};
-    const int ldc = ldc_ / ${width};
-% else:
-${kname}(device const ${dtype}* b, device ${dtype}* c,
-         uint2 tpig [[thread_position_in_grid]],
-         uint2 tpitg [[thread_position_in_threadgroup]])
-{
-    const int n = ${-(-n // width)};
-    const ${'long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
-    const ${'long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
-% endif
+${parent.prologue(['uint2 tpig [[thread_position_in_grid]]',
+                   'uint2 tpitg [[thread_position_in_threadgroup]]'])}\
     const int i = tpig.x;
 
     ${dtype} cv[${-(-csz // ksplit)}], bv[${-(-k // ksplit)}], dotp;

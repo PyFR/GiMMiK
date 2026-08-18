@@ -53,4 +53,28 @@ nt_load(const ${dtype}* p)
 % endif
 }
 
+## Kernel signature along with the leading dimension setup
+<%def name="prologue(nthreads)">\
+__global__ __launch_bounds__(${nthreads}) void
+% if n is None:
+${kname}(int n,
+         const ${dtype}* __restrict__ b, int ldb_,
+         ${dtype}* __restrict__ c, int ldc_)
+{
+  % if width > 1:
+    n = (n + ${width} - 1) / ${width};
+    ldb_ /= ${width};
+    ldc_ /= ${width};
+  % endif
+    const long long ldb = ldb_;
+    const long long ldc = ldc_;
+% else:
+${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
+{
+    const int n = ${-(-n // width)};
+    const ${'long long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
+    const ${'long long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
+% endif
+</%def>
+
 ${next.body()}

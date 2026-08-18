@@ -1,16 +1,6 @@
-__kernel void
-% if n is None:
-${kname}(int n,
-         __global const ${dtype}* restrict b, int ldb,
-         __global ${dtype}* restrict c, int ldc)
-{
-% else:
-${kname}(__global const ${dtype}* restrict b, __global ${dtype}* restrict c)
-{
-    const int n = ${n};
-    const ${'long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
-    const ${'long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
-% endif
+<%inherit file='base'/>
+
+${parent.prologue()}\
     int i = get_global_id(0);
 
     if (i < n)
