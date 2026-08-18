@@ -19,28 +19,25 @@ class PTXMatMul(MatMul):
     FZERO = {'float': '0f00000000', 'double': '0d0000000000000000'}
     PFTYPE = {'float': 'f32', 'double': 'f64'}
 
-    @classmethod
-    def is_sparse_suitable(cls, arr, cc):
-        cc = cc or (0, 0)
-        nnz = np.count_nonzero(arr)
-        nuq = len(np.unique(np.abs(arr)))
-        density = nnz / arr.size
-        return ((nuq <= 28) or (density <= 0.15)) and cc >= (7, 0)
+    def _sparse_viable(self, cc):
+        # True when the sparse kernels can pay off on the target
+        return self._unrolled_viable() and cc >= (7, 0)
 
-    @classmethod
-    def is_dense_suitable(cls, arr, cc):
-        cc_appropriate = cc in cls.PTX_SM and cc >= (9, 0)
-        return (arr.dtype == np.float64 and cc_appropriate
-                and arr.shape[0] <= 128 and arr.shape[1] <= 128)
+    def _dense_viable(self, cc):
+        # True when the target and operator admit the dense DMMA kernels
+        cc_appropriate = cc in self.PTX_SM and cc >= (9, 0)
 
-    @classmethod
-    def is_suitable(cls, arr, cc):
-        return (cls.is_sparse_suitable(arr, cc)
-                or cls.is_dense_suitable(arr, cc))
+        # These templates implement a beta of zero and of one only
+        return (self.A.dtype == np.float64 and cc_appropriate and
+                self.beta in (0, 1) and self.m <= 128 and self.k <= 128)
 
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
                            smem_max=None):
         cc = compute_capability or (0, 0)
+
+        if not self._sparse_viable(cc) and not self._dense_viable(cc):
+            return
+
         config = self._platform_config(dtype, cc)
 
         # When we know the PTX version but there isn't an SM specific config,
@@ -348,13 +345,13 @@ class PTXMatMul(MatMul):
     def _usable_config(self, kernel_cfg, dtype, cc):
         family = kernel_cfg['family']
 
-        if family == 'sparse' and not self.is_sparse_suitable(self.A, cc):
-            return False
-        elif (family in {'dense', 'dense-ws'} and
-              (dtype != 'double' or self.n is None or
-               self.beta not in (0, 1) or
-               not self.is_dense_suitable(self.A, cc))):
-            return False
+        if family == 'sparse':
+            if not self._sparse_viable(cc):
+                return False
+        elif family in {'dense', 'dense-ws'}:
+            dense = self._dense_viable(cc)
+            if dtype != 'double' or self.n is None or not dense:
+                return False
 
         condition = kernel_cfg.get('conditions')
         if condition is None:

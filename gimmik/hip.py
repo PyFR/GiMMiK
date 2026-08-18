@@ -5,7 +5,13 @@ class HIPMatMul(MatMul):
     platform = 'hip'
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0}
 
+    # The HIP kernels tolerate a wider spread of unique values
+    max_unique = 128
+
     def _kernel_generators(self, dtype, dsize, *, gcn_arch=None, warp_size=64):
+        if not self._unrolled_viable():
+            return
+
         max_block_threads = 1024
         max_shared = 64*1024
 

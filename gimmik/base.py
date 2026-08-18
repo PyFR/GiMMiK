@@ -57,6 +57,10 @@ class MatMul:
     platform = None
     _float_suffix = 'f'
 
+    # Thresholds for the default viability heuristic
+    max_unique = 28
+    max_density = 0.15
+
     def __init__(self, A, beta=0.0, aligne=None, n=None, ldb=None, ldc=None):
         self.A = A
         self.beta = beta
@@ -94,6 +98,13 @@ class MatMul:
 
         # Create config cache
         self._config_cache = {}
+
+    def _unrolled_viable(self):
+        # True when the fully unrolled kernels can beat a vendor GEMM
+        nuq = len(np.unique(np.abs(self.A)))
+        density = np.count_nonzero(self.A) / self.A.size
+
+        return nuq <= self.max_unique or density <= self.max_density
 
     def kernels(self, dtype, kname='gimmik_mm', **kwargs):
         basemeta = self.basemeta

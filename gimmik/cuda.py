@@ -1,5 +1,3 @@
-import numpy as np
-
 from gimmik.base import MatMul
 
 
@@ -8,15 +6,11 @@ class CUDAMatMul(MatMul):
     basemeta = {'block': (128, 1, 1), 'width': 1, 'shared': 0,
                 'dynamic_shared': 0}
 
-    @staticmethod
-    def is_suitable(arr):
-        nnz = np.count_nonzero(arr)
-        nuq = len(np.unique(np.abs(arr)))
-        density = nnz / arr.size
-        return (nuq <= 28) or (density <= 0.15)
-
     def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
                            **kwargs):
+        if not self._unrolled_viable():
+            return
+
         # B loading, C streaming kernel
         yield ('cstream', {}, {})
 

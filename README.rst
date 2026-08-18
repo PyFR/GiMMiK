@@ -57,6 +57,12 @@ describing how it should be launched.  Rather than taking the first
 candidate, callers are expected to benchmark the sequence and keep whichever
 kernel performs best on their hardware.
 
+Only kernels which suit the operator, the target and the arguments given are
+yielded, so the sequence may be empty.  This is not an error: it means GiMMiK
+has nothing to offer for the problem, and a vendor GEMM should be preferred.
+Callers which benchmark the sequence therefore need to handle having found no
+kernel at all.
+
 The number of columns of B may either be baked into the kernel, by passing
 ``n`` together with the leading dimensions ``ldb`` and ``ldc``, or left as a
 runtime argument by passing none of them.  A baked kernel takes just the two
