@@ -24,6 +24,7 @@ keywords = [
     "HIP",
     "Metal",
     "OpenCL",
+    "PTX",
 ]
 classifiers = [
     "Programming Language :: Python",

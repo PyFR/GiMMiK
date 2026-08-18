@@ -7,23 +7,3 @@ from gimmik.hip import HIPMatMul
 from gimmik.metal import MetalMatMul
 from gimmik.opencl import OpenCLMatMul
 from gimmik.ptx import PTXMatMul
-
-
-def generate_mm(mat, dtype, platform, alpha=1.0, beta=0.0, funcn='gimmik_mm',
-                n=None, ldb=None, ldc=None):
-    import warnings
-
-    warnings.warn('generate_mm is deprecated, use MatMul', DeprecationWarning)
-
-    platmap = {
-        'c': CMatMul,
-        'c-omp': COpenMPMatMul,
-        'cuda': CUDAMatMul,
-        'ispc': ISPCMatMul,
-        'hip': HIPMatMul,
-        'opencl': OpenCLMatMul,
-        'ptx': PTXMatMul
-    }
-
-    mm = platmap[platform](alpha*mat, beta, None, n, ldb, ldc)
-    return next(mm.kernels(dtype, kname=funcn))[0]

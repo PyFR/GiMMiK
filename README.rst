@@ -51,6 +51,16 @@ factor.
     mm = CUDAMatMul(2.0*mat, beta=0.0)
     src, metadata = next(mm.kernels(np.float32))
 
+The ``kernels`` method is a generator which yields a sequence of candidate
+kernels for the operator matrix, each paired with a dictionary of metadata
+describing how it should be launched.  Rather than taking the first
+candidate, callers are expected to benchmark the sequence and keep whichever
+kernel performs best on their hardware.
+
+The available generators are ``CMatMul``, ``COpenMPMatMul``, ``CUDAMatMul``,
+``HIPMatMul``, ``ISPCMatMul``, ``MetalMatMul``, ``OpenCLMatMul``, and
+``PTXMatMul``.
+
 Who uses GiMMiK?
 ----------------
 GiMMiK was developed to improve the performance of the
