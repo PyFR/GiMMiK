@@ -284,9 +284,9 @@ class MatMul:
         match axis:
             case int():
                 return axis
-            case {'div': div, 'mul': mul}:
+            case {'div': div, 'mul': mul, **rest} if not rest:
                 return -(-n // div)*mul
-            case {'div': div}:
+            case {'div': div, **rest} if not rest:
                 return -(-n // div)
             case _:
                 raise ValueError(f'Invalid launch axis: {axis}')
