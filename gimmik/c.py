@@ -5,5 +5,5 @@ class CMatMul(MatMul):
     platform = 'c'
     basemeta = {}
 
-    def _kernel_generators(self, dtype, dsize):
+    def _kernel_generators(self, dtype, dsize, *, sigs):
         yield ('cstream', {}, {})

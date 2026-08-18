@@ -6,7 +6,7 @@ class MetalMatMul(MatMul):
     basemeta = {'threadgroup': (128, 1, 1), 'threadgroup_mem_size': 0,
                 'width': 1}
 
-    def _kernel_generators(self, dtype, dsize):
+    def _kernel_generators(self, dtype, dsize, *, sigs):
         # B loading, C streaming kernel
         yield ('cstream', {}, {})
 

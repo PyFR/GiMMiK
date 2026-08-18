@@ -5,6 +5,6 @@ class COpenMPMatMul(MatMul):
     platform = 'c-openmp'
     basemeta = {}
 
-    def _kernel_generators(self, dtype, dsize):
+    def _kernel_generators(self, dtype, dsize, *, sigs):
         yield ('cstream', {}, {})
 

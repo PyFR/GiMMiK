@@ -22,7 +22,7 @@
         "csz": 32,
         "preload_c": true
       },
-      "descriptor": "cstream-ksplit/preload-c/k2-c32-x64"
+      "variant": "cstream-ksplit/preload-c/k2-c32-x64"
     },
     {
       "template": "cstream-ksplit-v2",
@@ -63,7 +63,7 @@
           }
         ]
       },
-      "descriptor": "cstream-ksplit-v2/preload-c/k2-c16-x64"
+      "variant": "cstream-ksplit-v2/preload-c/k2-c16-x64"
     },
     {
       "template": "cstream",
@@ -74,7 +74,7 @@
         1
       ],
       "width": 1,
-      "descriptor": "cstream/x128"
+      "variant": "cstream/x128"
     },
     {
       "template": "cstream-ksplit-v2",
@@ -115,7 +115,7 @@
           }
         ]
       },
-      "descriptor": "cstream-ksplit-v2/preload-c/k2-c24-x64"
+      "variant": "cstream-ksplit-v2/preload-c/k2-c24-x64"
     },
     {
       "template": "bstream",
@@ -126,7 +126,7 @@
         1
       ],
       "width": 1,
-      "descriptor": "bstream/x256"
+      "variant": "bstream/x256"
     },
     {
       "template": "bstream-msplit-v2",
@@ -167,7 +167,7 @@
           }
         ]
       },
-      "descriptor": "bstream-msplit-v2/preload-c/m2-b32-x64"
+      "variant": "bstream-msplit-v2/preload-c/m2-b32-x64"
     },
     {
       "template": "cstream-ksplit",
@@ -182,7 +182,7 @@
         "csz": 24,
         "preload_c": true
       },
-      "descriptor": "cstream-ksplit/preload-c/k2-c24-x64"
+      "variant": "cstream-ksplit/preload-c/k2-c24-x64"
     },
     {
       "template": "cstream-ksplit-v2",
@@ -223,7 +223,7 @@
           }
         ]
       },
-      "descriptor": "cstream-ksplit-v2/preload-c/k2-c32-x64"
+      "variant": "cstream-ksplit-v2/preload-c/k2-c32-x64"
     }
   ]
 }

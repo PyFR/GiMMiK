@@ -1,11 +1,14 @@
 import numpy as np
 
-from gimmik.base import MatMul
+from gimmik.base import (SIG_BC, SIG_BDESC_C, SIG_BDESC_CDESC, MatMul,
+                         tensormap_spec)
 
 
 class PTXMatMul(MatMul):
     platform = 'ptx'
     _float_suffix = ''
+
+    sigs = frozenset({SIG_BC, SIG_BDESC_C, SIG_BDESC_CDESC})
     basemeta = {
         'block': (128, 1, 1),
         'width': 1,
@@ -18,6 +21,7 @@ class PTXMatMul(MatMul):
 
     FZERO = {'float': '0f00000000', 'double': '0d0000000000000000'}
     PFTYPE = {'float': 'f32', 'double': 'f64'}
+    NPTYPE = {'float': np.float32, 'double': np.float64}
 
     def _sparse_viable(self, cc):
         # True when the sparse kernels can pay off on the target
@@ -31,8 +35,8 @@ class PTXMatMul(MatMul):
         return (self.A.dtype == np.float64 and cc_appropriate and
                 self.beta in (0, 1) and self.m <= 128 and self.k <= 128)
 
-    def _kernel_generators(self, dtype, dsize, *, compute_capability=None,
-                           smem_max=None):
+    def _kernel_generators(self, dtype, dsize, *, sigs,
+                           compute_capability=None, smem_max=None):
         cc = compute_capability or (0, 0)
 
         if not self._sparse_viable(cc) and not self._dense_viable(cc):
@@ -58,25 +62,6 @@ class PTXMatMul(MatMul):
             if prepared:
                 yield prepared
 
-    def render_config(self, kernel_cfg, dtype, dsize, cc, ptx, *,
-                      kname='gimmik_mm', smem_max=None):
-        if not self._usable_config(kernel_cfg, dtype, cc):
-            return None
-
-        prepared = self._get_render_args(kernel_cfg, dtype, dsize, cc, ptx,
-                                         smem_max)
-        if prepared is None:
-            return None
-
-        tpl, exargs, exmeta = prepared
-
-        args = self._base_template_args(dtype, kname) | exargs
-        meta = self.basemeta | exmeta
-        meta['tplname'] = tpl
-        self._process_meta(meta)
-        src = self._render_kernel(dtype, tpl, args)
-        return src, args, meta
-
     def _get_render_args(self, kernel_cfg, dtype, dsize, cc, ptx, smem_max):
         tpl = kernel_cfg['template']
         family = kernel_cfg['family']
@@ -99,7 +84,7 @@ class PTXMatMul(MatMul):
         base_meta = {
             'block': block,
             'width': width,
-            'desc': kernel_cfg['descriptor'],
+            'variant': kernel_cfg['variant'],
         }
 
         match family:
@@ -107,11 +92,11 @@ class PTXMatMul(MatMul):
                 cfg = self._sparse_args(tpl, params, block, dtype, dsize,
                                         base_args, base_meta)
             case 'dense':
-                cfg = self._dense_args(kernel_cfg, params, cc, base_args,
-                                       base_meta)
+                cfg = self._dense_args(kernel_cfg, params, cc, dtype, dsize,
+                                       base_args, base_meta)
             case 'dense-ws':
                 cfg = self._dense_ws_args(kernel_cfg, params, cc, smem_max,
-                                          base_args, base_meta)
+                                          dtype, dsize, base_args, base_meta)
             case _:
                 raise ValueError(f'Unknown PTX template family for {tpl}')
 
@@ -141,7 +126,17 @@ class PTXMatMul(MatMul):
                 args['blockx'] = blockx
         return tpl, args, meta
 
-    def _dense_args(self, kernel_cfg, params, cc, args, meta):
+    def _b_tensormap(self, dtype, dsize, n_per_cta, k_pad):
+        # Tensor map for the B panel a descriptor kernel streams in
+        return tensormap_spec('b', self.NPTYPE[dtype], (n_per_cta, k_pad),
+                              (self.n, self.k), (self.ldb*dsize,))
+
+    def _c_tensormap(self, dtype, dsize, n_per_cta, m_pad):
+        # Tensor map for the C panel a descriptor kernel stages out
+        return tensormap_spec('c', self.NPTYPE[dtype], (n_per_cta, m_pad),
+                              (self.n, self.m), (self.ldc*dsize,))
+
+    def _dense_args(self, kernel_cfg, params, cc, dtype, dsize, args, meta):
         tpl, tile = kernel_cfg['template'], kernel_cfg['tile']
         nn, warps, width = params['nn'], params['warps'], kernel_cfg['width']
 
@@ -174,9 +169,15 @@ class PTXMatMul(MatMul):
             'b_smem_ntile_stride': setup['tile_n']*args['dwidth_i'],
             'blockx_total': 32*warps*msplit,
         }
+
         # Shared memory: the staged B tile plus the barrier guarding it
         meta['shared'] = b_tile_bytes + 8
-        meta['ws_b_tile'] = (n_per_cta, k_pad)
+
+        # These stream B through a tensor map but store C through a pointer
+        meta['sig'] = SIG_BDESC_C
+        meta['operands'] = {
+            'b_desc': self._b_tensormap(dtype, dsize, n_per_cta, k_pad)
+        }
 
         return tpl, args, meta
 
@@ -263,7 +264,8 @@ class PTXMatMul(MatMul):
             'pm_runtime': pm_runtime,
         }
 
-    def _dense_ws_args(self, kernel_cfg, params, cc, smem_max, args, meta):
+    def _dense_ws_args(self, kernel_cfg, params, cc, smem_max, dtype, dsize,
+                       args, meta):
         tpl = kernel_cfg['template']
         nn = params['nn']
         tile = kernel_cfg['tile']
@@ -332,13 +334,21 @@ class PTXMatMul(MatMul):
                 }
 
         args |= setup | ws_setup
-        meta |= {
-            'grid': grid,
-            'shared': smem,
-            'ws_b_tile': (n_per_cta, k_pad),
+
+        # With beta=0 these store straight to global, so C is a plain pointer
+        operands = {
+            'b_desc': self._b_tensormap(dtype, dsize, n_per_cta, k_pad)
         }
-        if self.beta != 0:
-            meta['ws_out_tile'] = (n_per_cta, m_pad)
+
+        if self.beta == 0:
+            sig = SIG_BDESC_C
+        else:
+            sig = SIG_BDESC_CDESC
+            operands['c_desc'] = self._c_tensormap(dtype, dsize, n_per_cta,
+                                                   m_pad)
+
+        meta |= {'grid': grid, 'shared': smem, 'sig': sig,
+                 'operands': operands}
 
         return tpl, args, meta
 

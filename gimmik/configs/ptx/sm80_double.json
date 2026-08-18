@@ -18,7 +18,7 @@
         1
       ],
       "width": 1,
-      "descriptor": "cstream"
+      "variant": "cstream"
     },
     {
       "template": "bstream",
@@ -29,7 +29,7 @@
         1
       ],
       "width": 1,
-      "descriptor": "bstream"
+      "variant": "bstream"
     },
     {
       "template": "bstream-msplit",
@@ -43,7 +43,7 @@
       "params": {
         "bsz": 24
       },
-      "descriptor": "bstream-msplit/m4-b24-x32"
+      "variant": "bstream-msplit/m4-b24-x32"
     },
     {
       "template": "bstream-msplit-v2",
@@ -81,7 +81,7 @@
           }
         ]
       },
-      "descriptor": "bstream-msplit-v2/m4-b16-x32"
+      "variant": "bstream-msplit-v2/m4-b16-x32"
     },
     {
       "template": "bstream-msplit",
@@ -111,7 +111,7 @@
           }
         ]
       },
-      "descriptor": "bstream-msplit/m1-b32-x64"
+      "variant": "bstream-msplit/m1-b32-x64"
     },
     {
       "template": "cstream-ksplit",
@@ -125,7 +125,7 @@
       "params": {
         "csz": 24
       },
-      "descriptor": "cstream-ksplit/k2-c24-x32"
+      "variant": "cstream-ksplit/k2-c24-x32"
     },
     {
       "template": "cstream-ksplit-v2",
@@ -163,7 +163,7 @@
           }
         ]
       },
-      "descriptor": "cstream-ksplit-v2/k2-c24-x32"
+      "variant": "cstream-ksplit-v2/k2-c24-x32"
     },
     {
       "template": "cstream-ksplit",
@@ -181,7 +181,7 @@
         "field": "k_used",
         "gt": 500
       },
-      "descriptor": "cstream-ksplit/k4-c20-x32"
+      "variant": "cstream-ksplit/k4-c20-x32"
     },
     {
       "template": "cstream-v2",
@@ -216,7 +216,7 @@
           }
         ]
       },
-      "descriptor": "cstream-v2/x128"
+      "variant": "cstream-v2/x128"
     }
   ]
 }

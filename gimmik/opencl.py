@@ -10,7 +10,7 @@ class OpenCLMatMul(MatMul):
     # Beyond this the fully unrolled kernel stops being competitive
     max_nnz = 2048
 
-    def _kernel_generators(self, dtype, dsize, *, local_mem_size=None,
+    def _kernel_generators(self, dtype, dsize, *, sigs, local_mem_size=None,
                            max_nnz=None):
         nnz_max = self.max_nnz if max_nnz is None else max_nnz
 

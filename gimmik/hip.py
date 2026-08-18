@@ -8,7 +8,8 @@ class HIPMatMul(MatMul):
     # The HIP kernels tolerate a wider spread of unique values
     max_unique = 128
 
-    def _kernel_generators(self, dtype, dsize, *, gcn_arch=None, warp_size=64):
+    def _kernel_generators(self, dtype, dsize, *, sigs, gcn_arch=None,
+                           warp_size=64):
         if not self._unrolled_viable():
             return
 
@@ -30,7 +31,7 @@ class HIPMatMul(MatMul):
         args = {'msplit': ms, 'bsz': bsz, 'blockx': blkx}
         meta = {
             'block': (blkx, ms, 1), 'shared': 2*bsz*blkx*dsize,
-            'desc': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}'
+            'variant': f'bstream-msplit/m{ms}-b{bsz}-x{blkx}'
         }
         yield from emit('bstream-msplit', args, meta)
 
@@ -38,7 +39,7 @@ class HIPMatMul(MatMul):
         args = {'ksplit': ks, 'csz': csz, 'blockx': blkx}
         meta = {
             'block': (blkx, ks, 1), 'shared': (ks - 1)*csz*blkx*dsize,
-            'desc': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}'
+            'variant': f'cstream-ksplit/k{ks}-c{csz}-x{blkx}'
         }
         yield from emit('cstream-ksplit', args, meta)
 
@@ -61,7 +62,7 @@ class HIPMatMul(MatMul):
                 shared = 2*bsz*blkx*dsize*width
                 meta = {
                     'block': (blkx, ms, 1), 'shared': shared,
-                    'desc': f'bstream-msplit/{wpfx}m{ms}-b{bsz}-x{blkx}'
+                    'variant': f'bstream-msplit/{wpfx}m{ms}-b{bsz}-x{blkx}'
                 } | wmeta
                 yield from emit('bstream-msplit', args, meta)
 
@@ -71,7 +72,7 @@ class HIPMatMul(MatMul):
                 shared = 2*bsz*blkx*dsize*width
                 meta = {
                     'block': (blkx, ms, 1), 'shared': shared,
-                    'desc': (
+                    'variant': (
                         f'bstream-msplit-preload-c/'
                         f'{wpfx}m{ms}-b{bsz}-x{blkx}'
                     )
@@ -84,7 +85,7 @@ class HIPMatMul(MatMul):
                 shared = (ks - 1)*csz*blkx*dsize*width
                 meta = {
                     'block': (blkx, ks, 1), 'shared': shared,
-                    'desc': (
+                    'variant': (
                         f'cstream-ksplit-preload-c/'
                         f'{wpfx}k{ks}-c{csz}-x{blkx}'
                     )

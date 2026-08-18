@@ -8,14 +8,14 @@
       "family": "sparse",
       "block": [128, 1, 1],
       "width": 1,
-      "descriptor": "cstream/x128"
+      "variant": "cstream/x128"
     },
     {
       "template": "bstream",
       "family": "sparse",
       "block": [128, 1, 1],
       "width": 1,
-      "descriptor": "bstream/x128"
+      "variant": "bstream/x128"
     },
     {
       "template": "bstream-msplit",
@@ -25,7 +25,7 @@
       "params": {
         "bsz": 24
       },
-      "descriptor": "bstream-msplit/m4-b24-x32"
+      "variant": "bstream-msplit/m4-b24-x32"
     },
     {
       "template": "cstream-ksplit",
@@ -35,7 +35,7 @@
       "params": {
         "csz": 24
       },
-      "descriptor": "cstream-ksplit/k2-c24-x32"
+      "variant": "cstream-ksplit/k2-c24-x32"
     }
   ]
 }

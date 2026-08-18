@@ -4,10 +4,75 @@ import json
 from pathlib import Path
 import pkgutil
 import re
+from uuid import uuid4
 
 from mako.lookup import TemplateLookup
 from mako.template import Template
 import numpy as np
+
+
+# Call signatures a kernel may have
+SIG_BC = 'bc'
+SIG_ABC = 'abc'
+SIG_BDESC_CDESC = 'bdesc-cdesc'
+SIG_BDESC_C = 'bdesc-c'
+
+# Argument lists per signature, for a baked and for a runtime n
+_SIG_ARGS = {
+    SIG_BC: {
+        'baked': ('b', 'c'),
+        'runtime': ('n', 'b', 'ldb', 'c', 'ldc')
+    },
+    SIG_ABC: {
+        'baked': ('a', 'b', 'c'),
+        'runtime': ('a', 'n', 'b', 'ldb', 'c', 'ldc')
+    },
+    SIG_BDESC_CDESC: {
+        'baked': ('b_desc', 'c_desc'),
+        'runtime': None
+    },
+    SIG_BDESC_C: {
+        'baked': ('b_desc', 'c'),
+        'runtime': None
+    }
+}
+
+SIGS = frozenset(_SIG_ARGS)
+
+# Operand kinds an argument may need the caller to prepare
+OPERAND_BUFFER = 'buffer'
+OPERAND_TENSORMAP = 'tensormap'
+
+
+def sig_of(meta):
+    # The signature a kernel reports, defaulting to the ubiquitous one
+    return meta.get('sig', SIG_BC)
+
+
+def tensormap_spec(operand, dtype, box, global_dim, global_stride,
+                   elem_stride=None, interleave='none', swizzle='none',
+                   l2_promotion='none', oob_fill='none'):
+    # Describes a tensor map the caller must encode for a descriptor argument
+    if len(box) != len(global_dim):
+        raise ValueError('box and global_dim must have equal rank')
+
+    if len(global_stride) != len(global_dim) - 1:
+        raise ValueError('global_stride must have rank - 1 entries')
+
+    return {
+        'kind': OPERAND_TENSORMAP,
+        'operand': operand,
+        'rank': len(box),
+        'dtype': np.dtype(dtype),
+        'box': tuple(box),
+        'global_dim': tuple(global_dim),
+        'global_stride': tuple(global_stride),
+        'elem_stride': tuple(elem_stride or (1,)*len(box)),
+        'interleave': interleave,
+        'swizzle': swizzle,
+        'l2_promotion': l2_promotion,
+        'oob_fill': oob_fill
+    }
 
 
 class _PlatformTemplateLookup(TemplateLookup):
@@ -57,6 +122,12 @@ class MatMul:
     platform = None
     _float_suffix = 'f'
 
+    # Metadata every kernel from this platform carries
+    basemeta = {}
+
+    # Call signatures this platform is capable of emitting
+    sigs = frozenset({SIG_BC})
+
     # Thresholds for the default viability heuristic
     max_unique = 28
     max_density = 0.15
@@ -99,6 +170,10 @@ class MatMul:
         # Create config cache
         self._config_cache = {}
 
+        # Identity for the metadata we hand out, and the packers behind it
+        self._uuid = uuid4().hex
+        self._packers = {}
+
     def _unrolled_viable(self):
         # True when the fully unrolled kernels can beat a vendor GEMM
         nuq = len(np.unique(np.abs(self.A)))
@@ -106,28 +181,66 @@ class MatMul:
 
         return nuq <= self.max_unique or density <= self.max_density
 
-    def kernels(self, dtype, kname='gimmik_mm', **kwargs):
-        basemeta = self.basemeta
+    def kernels(self, dtype, kname='gimmik_mm', *, sigs=frozenset({SIG_BC}),
+                **kwargs):
+        dtype, dsize = self._process_dtype(dtype)
+        sigs = self._process_sigs(sigs)
 
-        # Process the data type
+        return self._kernels(dtype, dsize, kname, sigs, **kwargs)
+
+    def available_sigs(self, dtype, **kwargs):
+        # Signatures offered for the operator and target given
+        dtype, dsize = self._process_dtype(dtype)
+        gen = self._kernel_generators(dtype, dsize, sigs=self.sigs, **kwargs)
+
+        found, resp = set(), None
+        try:
+            while True:
+                name, exargs, exmeta = gen.send(resp)
+                found.add(sig_of(exmeta))
+        except StopIteration:
+            pass
+
+        return found
+
+    def _process_dtype(self, dtype):
         dtype = np.dtype(dtype).type
         if dtype == np.float32:
-            dtype, dsize = 'float', 4
+            return 'float', 4
         elif dtype == np.float64:
-            dtype, dsize = 'double', 8
+            return 'double', 8
         else:
             raise ValueError('Invalid floating point data type')
+
+    def _process_sigs(self, sigs):
+        if isinstance(sigs, str):
+            raise ValueError('sigs must be a set of names, not a string')
+
+        sigs = frozenset(sigs)
+
+        if bad := sigs - SIGS:
+            raise ValueError(f'Unknown signature(s): {", ".join(sorted(bad))}')
+
+        return sigs
+
+    def _kernels(self, dtype, dsize, kname, sigs, **kwargs):
+        basemeta = self.basemeta
 
         # Common template arguments
         baseargs = self._base_template_args(dtype, kname)
 
         # Incrementally generate and render the kernels
-        gen = self._kernel_generators(dtype, dsize, **kwargs)
+        gen = self._kernel_generators(dtype, dsize, sigs=sigs, **kwargs)
         try:
             resp = None
             while True:
                 # Generate the next kernel in the sequence
                 name, exargs, exmeta = gen.send(resp)
+
+                # Never hand back a kernel the caller can not invoke
+                if sig_of(exmeta) not in sigs:
+                    resp = None
+                    continue
 
                 # Merge in the base arguments and metadata
                 args = baseargs | exargs
@@ -192,6 +305,59 @@ class MatMul:
         if self.n is not None:
             meta |= self.launch_config(meta, self.n)
             del meta['launch']
+
+        sig = meta.setdefault('sig', SIG_BC)
+        args = _SIG_ARGS[sig]['baked' if self.n is not None else 'runtime']
+
+        if args is None:
+            raise ValueError(f'Signature {sig} needs n to be baked in')
+
+        meta['args'] = args
+
+        operands = meta.setdefault('operands', {})
+
+        # Keep the packer private, handing back a token which names it
+        if (packer := meta.pop('_packer', None)) is not None:
+            token = (self._uuid, len(self._packers))
+            self._packers[token] = packer
+
+            abuf = operands.setdefault('a', {})
+            abuf |= {'kind': OPERAND_BUFFER, 'token': token}
+
+        # An operand the caller must prepare has to be one it is passed
+        if bad := set(operands) - set(args):
+            raise ValueError('Operands described but not taken as arguments: '
+                             f'{", ".join(sorted(bad))}')
+
+        # Conversely anything beyond B, C and their dimensions needs describing
+        plain = {'b', 'c', 'n', 'ldb', 'ldc'}
+        prepared = {a for a in args if a not in plain}
+
+        if missing := prepared - set(operands):
+            raise ValueError('Arguments left undescribed by operands: '
+                             f'{", ".join(sorted(missing))}')
+
+    def pack_a(self, meta, a=None):
+        # Lay A out as the kernel described by meta expects to find it
+        token = meta.get('operands', {}).get('a', {}).get('token')
+
+        if token is None:
+            raise ValueError('This kernel does not take an a buffer')
+
+        try:
+            packer = self._packers[token]
+        except (KeyError, TypeError):
+            raise ValueError('Metadata is not from this generator') from None
+
+        if a is None:
+            a = self.A
+        else:
+            a = np.asanyarray(a)
+
+            if a.shape != self.A.shape:
+                raise ValueError(f'a must have shape {self.A.shape}')
+
+        return packer(a)
 
     def _get_config(self, key):
         try:
