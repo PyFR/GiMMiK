@@ -260,7 +260,7 @@ class MatMul:
 
     def _base_template_args(self, dtype, kname):
         return {
-            'dtype': dtype, 'kname': kname,
+            'dtype': dtype, 'sdtype': dtype, 'kname': kname,
             'A': self.A, 'beta': self.beta, 'width': 1,
             'm': self.m, 'n': self.n, 'k': self.k,
             'ldb': self.ldb, 'ldc': self.ldc,

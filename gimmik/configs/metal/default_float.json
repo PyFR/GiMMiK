@@ -4,6 +4,166 @@
   "max_nnz_per_row": 48,
   "kernels": [
     {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [256, 1, 1],
+      "width": 1,
+      "params": {"w": 32, "pad": 0},
+      "variant": "dense/w32-s8-p0",
+      "conditions": {
+        "all": [
+          {"field": "n", "is_not": null},
+          {"field": "m", "gte": 16},
+          {"field": "k", "gte": 16},
+          {"any": [
+            {"field": "tile_density", "lt": 0.9},
+            {"field": "aspect", "gte": 0.8}
+          ]}
+        ]
+      }
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [256, 1, 1],
+      "width": 1,
+      "params": {"w": 32, "pad": 8},
+      "variant": "dense/w32-s8-p8",
+      "conditions": {
+        "all": [
+          {"field": "n", "is_not": null},
+          {"field": "m", "gte": 16},
+          {"field": "k", "gte": 16},
+          {"any": [
+            {"field": "tile_density", "lt": 0.9},
+            {"field": "aspect", "gte": 0.8}
+          ]}
+        ]
+      }
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [512, 1, 1],
+      "width": 1,
+      "params": {"w": 32, "pad": 0},
+      "variant": "dense/w32-s16-p0",
+      "conditions": {
+        "all": [
+          {"field": "n", "is_not": null},
+          {"field": "m", "gte": 16},
+          {"field": "k", "gte": 16},
+          {"any": [
+            {"field": "tile_density", "lt": 0.9},
+            {"field": "aspect", "gte": 0.8}
+          ]}
+        ]
+      }
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [512, 1, 1],
+      "width": 1,
+      "params": {"w": 32, "pad": 8},
+      "variant": "dense/w32-s16-p8",
+      "conditions": {
+        "all": [
+          {"field": "n", "is_not": null},
+          {"field": "m", "gte": 16},
+          {"field": "k", "gte": 16},
+          {"any": [
+            {"field": "tile_density", "lt": 0.9},
+            {"field": "aspect", "gte": 0.8}
+          ]}
+        ]
+      }
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [256, 1, 1],
+      "width": 1,
+      "params": {"w": 64, "pad": 8},
+      "variant": "dense/w64-s8-p8",
+      "conditions": {
+        "all": [
+          {"field": "n", "is_not": null},
+          {"field": "m", "gte": 16},
+          {"field": "k", "gte": 16},
+          {"any": [
+            {"field": "tile_density", "lt": 0.9},
+            {"field": "aspect", "gte": 0.8}
+          ]}
+        ]
+      }
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [512, 1, 1],
+      "width": 1,
+      "params": {"w": 64, "pad": 8},
+      "variant": "dense/w64-s16-p8",
+      "conditions": {
+        "all": [
+          {"field": "n", "is_not": null},
+          {"field": "m", "gte": 16},
+          {"field": "k", "gte": 16},
+          {"any": [
+            {"field": "tile_density", "lt": 0.9},
+            {"field": "aspect", "gte": 0.8}
+          ]}
+        ]
+      }
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [1024, 1, 1],
+      "width": 1,
+      "params": {"w": 64, "pad": 8},
+      "variant": "dense/w64-s32-p8",
+      "conditions": {
+        "all": [
+          {"field": "n", "is_not": null},
+          {"field": "m", "gte": 16},
+          {"field": "k", "gte": 16},
+          {"any": [
+            {"field": "tile_density", "lt": 0.9},
+            {"field": "aspect", "gte": 0.8}
+          ]}
+        ]
+      }
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [256, 1, 1],
+      "width": 1,
+      "params": {"w": 128, "pad": 8},
+      "variant": "dense/w128-s8-p8",
+      "conditions": {
+        "all": [
+          {"field": "n", "is_not": null},
+          {"field": "m", "gte": 16},
+          {"field": "k", "gte": 16},
+          {"any": [
+            {"field": "tile_density", "lt": 0.9},
+            {"field": "aspect", "gte": 0.8}
+          ]}
+        ]
+      }
+    },
+    {
       "template": "cstream",
       "family": "sparse",
       "threadgroup": [128, 1, 1],
