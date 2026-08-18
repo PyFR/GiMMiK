@@ -1,6 +1,8 @@
 GiMMiK
 ======
-Generator of Matrix Multiplication Kernels - GiMMiK - is a tool for generation of high performance matrix multiplication kernel code for various accelerator platforms. Currently C, CUDA, HIP, ISPC, Metal, and OpenCL are supported.
+GiMMiK (Generator of Matrix Multiplication Kernels) generates specialised,
+high-performance matrix multiplication kernels for C, CUDA, HIP, ISPC, Metal,
+OpenCL, and PTX.
 
 What does GiMMiK do?
 --------------------
@@ -8,43 +10,50 @@ Consider matrix multiplication of the form
 
 C = α∙A×B + β∙C
 
-GiMMiK generates fully unrolled kernels, highly specialised to a given operator matrix. The generated code is fully unrolled - each kernel computes a single column of the output matrix. GiMMiK was designed to perform well in a Block by Panel type of matrix multiplication where the operator matrix is small. GiMMiK also removes any sparsity form the operator matrix as well as attempts to reduce common sub-expressions.
+GiMMiK generates kernels specialised to a given operator matrix.  The generated
+code is fully unrolled, with each kernel computing a single column of the output
+matrix.  GiMMiK is designed for block-by-panel matrix multiplication where the
+operator matrix is small.  It removes sparsity from the operator matrix and
+attempts to reduce common subexpressions.
 
 How do I install GiMMiK?
 ------------------------
-Clone the git repository and use `setup.py` to install the GiMMiK package. You will need the following dependencies:
-
-* `mako <http://www.makotemplates.org/>`_
-* `numpy >= 1.7 <http://www.numpy.org/>`_
-
-Once obtained, you can install GiMMiK by running
+Install the latest release from PyPI with
 
 ::
 
-    python setup.py install
+    python -m pip install gimmik
 
-to perform a system-wide install. Alternatively, run
+To install from a source checkout, run
+
 ::
 
-    python setup.py install --user
+    python -m pip install .
 
-to install the package locally.
+GiMMiK requires Python 3.10 or newer, Mako 1.0 or newer, and NumPy 2.2 or
+newer.
 
 How do I use GiMMiK?
 --------------------
-Once installed, you are ready to use GiMMiK.
+Create a platform-specific matrix multiplication generator and request its
+kernels.  Multiplying the operator matrix applies the corresponding ``alpha``
+factor.
 
 .. code:: python
 
-    from gimmik import generate_mm
+    import numpy as np
 
-    ...
+    from gimmik import CUDAMatMul
+
+    mat = np.array([[1.0, 0.0], [2.0, 3.0]])
 
     # Generate a CUDA kernel for C = 2*mat*B
-    src = generate_mm(mat, np.float32, platform='cuda', alpha=2.0, beta=0.0)
-
-    ...
+    mm = CUDAMatMul(2.0*mat, beta=0.0)
+    src, metadata = next(mm.kernels(np.float32))
 
 Who uses GiMMiK?
 ----------------
-GiMMiK was develop to improve performance of the `PyFR <http://www.pyfr.org>`_ framework.
+GiMMiK was developed to improve the performance of the
+`PyFR <https://www.pyfr.org/>`_ framework.  It was originally developed as part
+of Bartosz Wozniak's master's thesis in the Department of Computing at Imperial
+College London and is currently maintained by Freddie Witherden.

@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools >= 77.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gimmik"
+dynamic = ["version"]
+description = "Generator of Matrix Multiplication Kernels"
+readme = "README.rst"
+license = "BSD-3-Clause"
+requires-python = ">=3.10"
+authors = [
+    {name = "Freddie Witherden", email = "freddie@witherden.org"},
+    {name = "Bartosz Wozniak", email = "bartosz.wozniak10@imperial.ac.uk"},
+]
+maintainers = [
+    {name = "Freddie Witherden", email = "freddie@witherden.org"}
+]
+keywords = [
+    "Matrix Multiplication",
+    "ISPC",
+    "GPU",
+    "CUDA",
+    "HIP",
+    "Metal",
+    "OpenCL",
+]
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "mako >= 1.0.0",
+    "numpy >= 2.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/PyFR/GiMMiK"
+Repository = "https://github.com/PyFR/GiMMiK"
+Issues = "https://github.com/PyFR/GiMMiK/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "gimmik._version.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["gimmik*"]
+
+[tool.setuptools.package-data]
+gimmik = ["kernels/*/*.mako", "configs/*/*.json"]
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+ignore = ["E731", "E741", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
