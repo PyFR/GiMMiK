@@ -413,7 +413,7 @@ class PTXMatMul(MatMul):
         lines.append(f'@{pred_reg} {instr}')
         return f'\n{indent}'.join(lines)
 
-    def _process_meta(self, meta):
-        if self.n is not None and 'grid' not in meta:
-            div = meta['block'][0]*meta['width']
-            meta['grid'] = (-(-self.n // div), 1, 1)
+    def _launch_description(self, meta):
+        div = meta['block'][0]*meta['width']
+
+        return {'grid': ({'div': div}, 1, 1)}

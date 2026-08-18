@@ -47,12 +47,13 @@ class OpenCLMatMul(MatMul):
             if meta['local_mem_size'] < max_local_mem:
                 yield ('bstream-msplit', args, meta)
 
-    def _process_meta(self, meta):
-        if self.n is not None:
-            lws, width = meta['local_work_size'], meta['width']
-            if lws is not None:
-                # Round up as the work group size here is a hard requirement
-                nx = -(-self.n // (width*lws[0]))*lws[0]
-                meta['global_work_size'] = (nx, lws[1])
-            else:
-                meta['global_work_size'] = (-(-self.n // width),)
+    def _launch_description(self, meta):
+        lws, width = meta['local_work_size'], meta['width']
+
+        # Round up as the work group size here is a hard requirement
+        if lws is not None:
+            gws = ({'div': width*lws[0], 'mul': lws[0]}, lws[1])
+        else:
+            gws = ({'div': width},)
+
+        return {'global_work_size': gws}

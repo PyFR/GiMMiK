@@ -144,8 +144,43 @@ class MatMul:
             'dot': _dot, 'partition': _partition, 'chunk': _chunk
         }
 
+    def launch_config(self, meta, n):
+        # Resolve the launch description of a kernel for a given n
+        if (launch := meta.get('launch')) is None:
+            raise ValueError('Kernel has a fixed launch geometry')
+
+        cfg = {}
+
+        for key, axes in launch.items():
+            cfg[key] = tuple(self._launch_axis(ax, n) for ax in axes)
+
+        return cfg
+
+    def _launch_axis(self, axis, n):
+        match axis:
+            case int():
+                return axis
+            case {'div': div, 'mul': mul}:
+                return -(-n // div)*mul
+            case {'div': div}:
+                return -(-n // div)
+            case _:
+                raise ValueError(f'Invalid launch axis: {axis}')
+
+    def _launch_description(self, meta):
+        return {}
+
     def _process_meta(self, meta):
-        pass
+        # Kernels which work out a geometry of their own describe nothing
+        if 'grid' in meta:
+            meta['launch'] = {}
+        else:
+            meta['launch'] = self._launch_description(meta)
+
+        # With n baked in the geometry is fixed, so resolve and drop it
+        if self.n is not None:
+            meta |= self.launch_config(meta, self.n)
+            del meta['launch']
 
     def _get_config(self, key):
         try:

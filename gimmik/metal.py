@@ -51,7 +51,7 @@ class MetalMatMul(MatMul):
                     'threadgroup_mem_size': 2*blkx*bsz*dsize, 'width': 2}
             yield ('bstream-msplit', args, meta)
 
-    def _process_meta(self, meta):
-        if self.n is not None:
-            tg = meta['threadgroup']
-            meta['grid'] = (-(-self.n // meta['width']), tg[1], 1)
+    def _launch_description(self, meta):
+        tg = meta['threadgroup']
+
+        return {'grid': ({'div': meta['width']}, tg[1], 1)}
