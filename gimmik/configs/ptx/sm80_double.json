@@ -212,7 +212,7 @@
           },
           {
             "field": "aligne",
-            "is_null_or_divisible_by": 2
+            "divisible_by": 2
           }
         ]
       },

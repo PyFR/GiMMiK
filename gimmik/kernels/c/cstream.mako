@@ -1,9 +1,11 @@
 void
 % if n is None:
 ${kname}(int n,
-         const ${dtype}* restrict b, int ldb,
-         ${dtype}* restrict c, int ldc)
+         const ${dtype}* restrict b, int ldb_,
+         ${dtype}* restrict c, int ldc_)
 {
+    const long long ldb = ldb_;
+    const long long ldc = ldc_;
 % else:
 ${kname}(const ${dtype}* restrict b, ${dtype}* restrict c)
 {

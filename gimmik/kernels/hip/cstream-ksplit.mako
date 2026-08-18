@@ -57,7 +57,7 @@ ${kname}(const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
         cv[${loop.index // ksplit}] = nt_load(&c[i + ${j}*ldc]) + dotp;
         % elif preload and has_dotp and beta != 0:
         cv[${loop.index // ksplit}] = ${beta}*nt_load(&c[i + ${j}*ldc]) + dotp;
-        % elif not preload or beta == 0:
+        % else:
         cv[${loop.index // ksplit}] = dotp;
         % endif
       ## Save to shared memory

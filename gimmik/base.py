@@ -203,11 +203,11 @@ class MatMul:
         src = tpl.render(**tplargs)
 
         if dtype == 'float' and self._float_suffix:
-            src = re.sub(r'(?=\d*[.eE])(?=\.?\d)\d*\.?\d*(?:[eE][+-]?\d+)?',
+            src = re.sub(r'(?<![\w.])(?=\d*[.eE])(?=\.?\d)'
+                         r'\d*\.?\d*(?:[eE][+-]?\d+)?',
                          rf'\g<0>{self._float_suffix}', src)
 
         # Cleanup
-        src = re.sub(r'^\w+\n$', '', src.strip())
-        src = re.sub(r'\n\n+', r'\n\n', src) + '\n'
-        src = re.sub(r'\w+$', '', src)
+        src = re.sub(r'[ \t]+$', '', src.strip(), flags=re.M)
+        src = re.sub(r'\n{3,}', '\n\n', src) + '\n'
         return src

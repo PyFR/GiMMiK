@@ -154,8 +154,11 @@ class PTXMatMul(MatMul):
 
         args |= setup
         if tpl.startswith('dmma-asmem'):
-            args |= {'a_copy_threads': 32*warps,
-                     'block_stealing': bool(params['block_stealing'])}
+            stealing = bool(params['block_stealing'])
+            args |= {'a_copy_threads': 32*warps, 'block_stealing': stealing}
+
+            # Shared memory: A, plus a barrier and mailbox when stealing
+            meta['shared'] = setup['a_elems']*args['dwidth_i'] + 24*stealing
         meta['grid'] = (-(-self.n // setup['n_per_cta']), 1, 1)
 
         msplit = params.get('msplit')
@@ -174,6 +177,8 @@ class PTXMatMul(MatMul):
             'b_smem_ntile_stride': setup['tile_n']*args['dwidth_i'],
             'blockx_total': 32*warps*msplit,
         }
+        # Shared memory: the staged B tile plus the barrier guarding it
+        meta['shared'] = b_tile_bytes + 8
         meta['ws_b_tile'] = (n_per_cta, k_pad)
 
         return tpl, args, meta
@@ -290,16 +295,18 @@ class PTXMatMul(MatMul):
         c_tile_bytes = 8*m_pad*n_per_cta
         a_bytes = 8*setup['a_elems']
 
-        if smem_max is not None:
-            match tpl:
-                case 'dmma-steal-ws':
-                    smem_est = 2*b_tile_bytes + a_bytes + 32 + 13*8
-                case 'dmma-stride-ws':
-                    smem_est = 2*b_tile_bytes + a_bytes + 5*8
-            if self.beta != 0:
-                smem_est += c_tile_bytes
-            if smem_est > smem_max:
-                return None
+        # Shared memory: both B stages, A, and the mailboxes and barriers
+        match tpl:
+            case 'dmma-steal-ws':
+                smem = 2*b_tile_bytes + a_bytes + 32 + 13*8
+            case 'dmma-stride-ws':
+                smem = 2*b_tile_bytes + a_bytes + 5*8
+
+        if self.beta != 0:
+            smem += c_tile_bytes
+
+        if smem_max is not None and smem > smem_max:
+            return None
 
         ws_setup = {
             'n_comp_warps': n_comp_warps,
@@ -330,6 +337,7 @@ class PTXMatMul(MatMul):
         args |= setup | ws_setup
         meta |= {
             'grid': grid,
+            'shared': smem,
             'ws_b_tile': (n_per_cta, k_pad),
         }
         if self.beta != 0:
@@ -342,9 +350,10 @@ class PTXMatMul(MatMul):
 
         if family == 'sparse' and not self.is_sparse_suitable(self.A, cc):
             return False
-        elif (family in {'dense', 'dense-ws'}
-              and (dtype != 'double' or self.n is None
-                   or not self.is_dense_suitable(self.A, cc))):
+        elif (family in {'dense', 'dense-ws'} and
+              (dtype != 'double' or self.n is None or
+               self.beta not in (0, 1) or
+               not self.is_dense_suitable(self.A, cc))):
             return False
 
         condition = kernel_cfg.get('conditions')
@@ -355,8 +364,14 @@ class PTXMatMul(MatMul):
             return self._eval_condition(condition, stats)
 
     def _platform_config(self, dtype, cc):
-        key = f'sm{cc[0]}{cc[1]}_{dtype}' if cc else f'default_{dtype}'
-        return self._get_config(key)
+        # Fall back on the default config when the SM has none of its own
+        if cc:
+            try:
+                return self._get_config(f'sm{cc[0]}{cc[1]}_{dtype}')
+            except FileNotFoundError:
+                pass
+
+        return self._get_config(f'default_{dtype}')
 
     def _matmul_stats(self, dtype, cc):
         nnz = np.count_nonzero(self.A)

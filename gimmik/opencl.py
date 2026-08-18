@@ -45,7 +45,7 @@ class OpenCLMatMul(MatMul):
             args = {'dtype': 'float2', 'width': 2, 'msplit': ms,
                     'blockx': blkx, 'bsz': bsz}
             meta = {'local_work_size': (blkx, ms),
-                    'local_mem_size': 2*blkx*bsz*dsize, 'width': 2}
+                    'local_mem_size': 2*blkx*bsz*2*dsize, 'width': 2}
             if meta['local_mem_size'] < max_local_mem:
                 yield ('bstream-msplit', args, meta)
 
@@ -53,6 +53,8 @@ class OpenCLMatMul(MatMul):
         if self.n is not None:
             lws, width = meta['local_work_size'], meta['width']
             if lws is not None:
-                meta['global_work_size'] = (-(-self.n // width), lws[1])
+                # Round up as the work group size here is a hard requirement
+                nx = -(-self.n // (width*lws[0]))*lws[0]
+                meta['global_work_size'] = (nx, lws[1])
             else:
                 meta['global_work_size'] = (-(-self.n // width),)
