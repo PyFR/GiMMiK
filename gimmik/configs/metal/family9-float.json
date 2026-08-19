@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "max_nnz": 16384,
-  "max_nnz_per_row": 48,
+  "max-nnz": 16384,
+  "max-nnz-per-row": 48,
   "kernels": [
     {
       "template": "dense",
@@ -11,7 +11,7 @@
       "width": 1,
       "params": {"w": 32, "pad": 0},
       "variant": "dense/w32-s8-p0",
-      "conditions": {"field": "n", "is_not": null}
+      "conditions": {"field": "n", "is-not": null}
     },
     {
       "template": "dense",
@@ -21,7 +21,7 @@
       "width": 1,
       "params": {"w": 32, "pad": 8},
       "variant": "dense/w32-s8-p8",
-      "conditions": {"field": "n", "is_not": null}
+      "conditions": {"field": "n", "is-not": null}
     },
     {
       "template": "dense",
@@ -31,7 +31,7 @@
       "width": 1,
       "params": {"w": 32, "pad": 0},
       "variant": "dense/w32-s16-p0",
-      "conditions": {"field": "n", "is_not": null}
+      "conditions": {"field": "n", "is-not": null}
     },
     {
       "template": "dense",
@@ -41,7 +41,7 @@
       "width": 1,
       "params": {"w": 32, "pad": 8},
       "variant": "dense/w32-s16-p8",
-      "conditions": {"field": "n", "is_not": null}
+      "conditions": {"field": "n", "is-not": null}
     },
     {
       "template": "dense",
@@ -51,7 +51,7 @@
       "width": 1,
       "params": {"w": 64, "pad": 8},
       "variant": "dense/w64-s8-p8",
-      "conditions": {"field": "n", "is_not": null}
+      "conditions": {"field": "n", "is-not": null}
     },
     {
       "template": "dense",
@@ -61,7 +61,7 @@
       "width": 1,
       "params": {"w": 64, "pad": 8},
       "variant": "dense/w64-s16-p8",
-      "conditions": {"field": "n", "is_not": null}
+      "conditions": {"field": "n", "is-not": null}
     },
     {
       "template": "dense",
@@ -71,7 +71,7 @@
       "width": 1,
       "params": {"w": 64, "pad": 8},
       "variant": "dense/w64-s32-p8",
-      "conditions": {"field": "n", "is_not": null}
+      "conditions": {"field": "n", "is-not": null}
     },
     {
       "template": "dense",
@@ -81,7 +81,7 @@
       "width": 1,
       "params": {"w": 128, "pad": 8},
       "variant": "dense/w128-s8-p8",
-      "conditions": {"field": "n", "is_not": null}
+      "conditions": {"field": "n", "is-not": null}
     },
     {
       "template": "cstream",
@@ -143,7 +143,7 @@
       "threadgroup": [128, 1, 1],
       "width": 2,
       "variant": "cstream/w2-x128",
-      "conditions": {"field": "aligne", "divisible_by": 2}
+      "conditions": {"field": "aligne", "divisible-by": 2}
     },
     {
       "template": "bstream",
@@ -151,7 +151,7 @@
       "threadgroup": [128, 1, 1],
       "width": 2,
       "variant": "bstream/w2-x128",
-      "conditions": {"field": "aligne", "divisible_by": 2}
+      "conditions": {"field": "aligne", "divisible-by": 2}
     },
     {
       "template": "bstream-msplit",
@@ -160,7 +160,7 @@
       "width": 2,
       "params": {"bsz": 16},
       "variant": "bstream-msplit/w2-m4-b16-x32",
-      "conditions": {"field": "aligne", "divisible_by": 2}
+      "conditions": {"field": "aligne", "divisible-by": 2}
     }
   ]
 }

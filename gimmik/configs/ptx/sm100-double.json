@@ -20,7 +20,7 @@
       "width": 1,
       "params": {
         "csz": 20,
-        "preload_c": true
+        "preload-c": true
       },
       "variant": "cstream-ksplit/preload-c/k2-c20-x32"
     },
@@ -35,7 +35,7 @@
       "width": 1,
       "params": {
         "bsz": 32,
-        "preload_c": true
+        "preload-c": true
       },
       "variant": "bstream-msplit/preload-c/m2-b32-x32"
     },
@@ -50,7 +50,7 @@
       "width": 1,
       "params": {
         "bsz": 32,
-        "preload_c": true
+        "preload-c": true
       },
       "variant": "bstream-msplit/preload-c/m4-b32-x32"
     },
@@ -79,7 +79,7 @@
       "width": 1,
       "params": {
         "csz": 16,
-        "preload_c": true
+        "preload-c": true
       },
       "variant": "cstream-ksplit/preload-c/k2-c16-x32"
     },
@@ -94,7 +94,7 @@
       "width": 2,
       "params": {
         "csz": 32,
-        "preload_c": true
+        "preload-c": true
       },
       "conditions": {
         "all": [
@@ -106,19 +106,19 @@
           },
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "n",
-            "divisible_by": 2
+            "divisible-by": 2
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -146,7 +146,7 @@
       "width": 1,
       "params": {
         "csz": 32,
-        "preload_c": true
+        "preload-c": true
       },
       "variant": "cstream-ksplit/preload-c/k2-c32-x32"
     },
@@ -167,15 +167,15 @@
       "params": {
         "nn": 2
       },
-      "warp_map": {
-        "compute_start": 0,
-        "compute_count": 4,
+      "warp-map": {
+        "compute-start": 0,
+        "compute-count": 4,
         "producer": 4,
         "stealer": 5
       },
       "conditions": {
         "field": "n",
-        "is_not": null
+        "is-not": null
       },
       "variant": "dmma-steal-ws/nn2-w4"
     },
@@ -202,15 +202,15 @@
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -233,15 +233,15 @@
       "params": {
         "nn": 1
       },
-      "warp_map": {
-        "compute_start": 0,
-        "compute_count": 4,
+      "warp-map": {
+        "compute-start": 0,
+        "compute-count": 4,
         "producer": 4,
         "stealer": 5
       },
       "conditions": {
         "field": "n",
-        "is_not": null
+        "is-not": null
       },
       "variant": "dmma-steal-ws/nn1-w4"
     },
@@ -267,15 +267,15 @@
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -304,15 +304,15 @@
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -335,15 +335,15 @@
       "params": {
         "nn": 4
       },
-      "warp_map": {
-        "compute_start": 0,
-        "compute_count": 4,
+      "warp-map": {
+        "compute-start": 0,
+        "compute-count": 4,
         "producer": 4,
         "stealer": 5
       },
       "conditions": {
         "field": "n",
-        "is_not": null
+        "is-not": null
       },
       "variant": "dmma-steal-ws/nn4-w4"
     },
@@ -370,15 +370,15 @@
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -406,15 +406,15 @@
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },

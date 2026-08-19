@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "max_nnz": 2048,
-  "max_nnz_per_row": 48,
+  "max-nnz": 2048,
+  "max-nnz-per-row": 48,
   "kernels": [
     {
       "template": "dense",
@@ -13,11 +13,11 @@
       "variant": "dense/w32-s8-p0",
       "conditions": {
         "all": [
-          {"field": "n", "is_not": null},
+          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
-            {"field": "tile_density", "lt": 0.9},
+            {"field": "tile-density", "lt": 0.9},
             {"field": "aspect", "gte": 0.8}
           ]}
         ]
@@ -33,11 +33,11 @@
       "variant": "dense/w32-s8-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is_not": null},
+          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
-            {"field": "tile_density", "lt": 0.9},
+            {"field": "tile-density", "lt": 0.9},
             {"field": "aspect", "gte": 0.8}
           ]}
         ]
@@ -53,11 +53,11 @@
       "variant": "dense/w32-s16-p0",
       "conditions": {
         "all": [
-          {"field": "n", "is_not": null},
+          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
-            {"field": "tile_density", "lt": 0.9},
+            {"field": "tile-density", "lt": 0.9},
             {"field": "aspect", "gte": 0.8}
           ]}
         ]
@@ -73,11 +73,11 @@
       "variant": "dense/w32-s16-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is_not": null},
+          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
-            {"field": "tile_density", "lt": 0.9},
+            {"field": "tile-density", "lt": 0.9},
             {"field": "aspect", "gte": 0.8}
           ]}
         ]
@@ -93,11 +93,11 @@
       "variant": "dense/w64-s8-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is_not": null},
+          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
-            {"field": "tile_density", "lt": 0.9},
+            {"field": "tile-density", "lt": 0.9},
             {"field": "aspect", "gte": 0.8}
           ]}
         ]
@@ -113,11 +113,11 @@
       "variant": "dense/w64-s16-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is_not": null},
+          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
-            {"field": "tile_density", "lt": 0.9},
+            {"field": "tile-density", "lt": 0.9},
             {"field": "aspect", "gte": 0.8}
           ]}
         ]
@@ -133,11 +133,11 @@
       "variant": "dense/w64-s32-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is_not": null},
+          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
-            {"field": "tile_density", "lt": 0.9},
+            {"field": "tile-density", "lt": 0.9},
             {"field": "aspect", "gte": 0.8}
           ]}
         ]
@@ -153,11 +153,11 @@
       "variant": "dense/w128-s8-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is_not": null},
+          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
-            {"field": "tile_density", "lt": 0.9},
+            {"field": "tile-density", "lt": 0.9},
             {"field": "aspect", "gte": 0.8}
           ]}
         ]
@@ -223,7 +223,7 @@
       "threadgroup": [128, 1, 1],
       "width": 2,
       "variant": "cstream/w2-x128",
-      "conditions": {"field": "aligne", "divisible_by": 2}
+      "conditions": {"field": "aligne", "divisible-by": 2}
     },
     {
       "template": "bstream",
@@ -231,7 +231,7 @@
       "threadgroup": [128, 1, 1],
       "width": 2,
       "variant": "bstream/w2-x128",
-      "conditions": {"field": "aligne", "divisible_by": 2}
+      "conditions": {"field": "aligne", "divisible-by": 2}
     },
     {
       "template": "bstream-msplit",
@@ -240,7 +240,7 @@
       "width": 2,
       "params": {"bsz": 16},
       "variant": "bstream-msplit/w2-m4-b16-x32",
-      "conditions": {"field": "aligne", "divisible_by": 2}
+      "conditions": {"field": "aligne", "divisible-by": 2}
     }
   ]
 }

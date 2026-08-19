@@ -397,13 +397,13 @@ class MatMul:
                 return value is not None and value >= expected
             case 'in':
                 return value in expected
-            case 'is_null':
+            case 'is-null':
                 return value is None
-            case 'is_not':
+            case 'is-not':
                 return value is not None
-            case 'divisible_by':
+            case 'divisible-by':
                 return value is not None and value % expected == 0
-            case 'is_null_or_divisible_by':
+            case 'is-null-or-divisible-by':
                 return (value is None or value % expected == 0)
             case _:
                 raise ValueError(f'op `{op}` not supported')

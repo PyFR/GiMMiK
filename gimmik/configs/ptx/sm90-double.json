@@ -95,19 +95,19 @@
           },
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "n",
-            "divisible_by": 2
+            "divisible-by": 2
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -133,19 +133,19 @@
           },
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "n",
-            "divisible_by": 2
+            "divisible-by": 2
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -210,19 +210,19 @@
           },
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "n",
-            "divisible_by": 2
+            "divisible-by": 2
           },
           {
-            "field": "k_used",
+            "field": "k-used",
             "lte": 100
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -240,21 +240,21 @@
       "params": {
         "nn": 1,
         "warps": 8,
-        "block_stealing": false
+        "block-stealing": false
       },
       "conditions": {
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -282,15 +282,15 @@
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -314,14 +314,14 @@
         "nn": 1,
         "iters": 8
       },
-      "warp_map": {
-        "compute_start": 0,
-        "compute_count": 4,
+      "warp-map": {
+        "compute-start": 0,
+        "compute-count": 4,
         "producer": 4
       },
       "conditions": {
         "field": "n",
-        "is_not": null
+        "is-not": null
       },
       "variant": "dmma-stride-ws/nn1-w4-i8",
       "family": "dense-ws",
@@ -347,15 +347,15 @@
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -378,21 +378,21 @@
       "params": {
         "nn": 2,
         "warps": 4,
-        "block_stealing": false
+        "block-stealing": false
       },
       "conditions": {
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -416,14 +416,14 @@
         "nn": 2,
         "iters": 2
       },
-      "warp_map": {
-        "compute_start": 0,
-        "compute_count": 4,
+      "warp-map": {
+        "compute-start": 0,
+        "compute-count": 4,
         "producer": 4
       },
       "conditions": {
         "field": "n",
-        "is_not": null
+        "is-not": null
       },
       "variant": "dmma-stride-ws/nn2-w4-i2",
       "family": "dense-ws",
@@ -449,15 +449,15 @@
         "all": [
           {
             "field": "n",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "is_not": null
+            "is-not": null
           },
           {
             "field": "aligne",
-            "divisible_by": 2
+            "divisible-by": 2
           }
         ]
       },
@@ -481,14 +481,14 @@
         "nn": 2,
         "iters": 8
       },
-      "warp_map": {
-        "compute_start": 0,
-        "compute_count": 4,
+      "warp-map": {
+        "compute-start": 0,
+        "compute-count": 4,
         "producer": 4
       },
       "conditions": {
         "field": "n",
-        "is_not": null
+        "is-not": null
       },
       "variant": "dmma-stride-ws/nn2-w4-i8",
       "family": "dense-ws",

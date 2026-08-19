@@ -115,12 +115,12 @@ class PTXMatMul(MatMul):
             case 'bstream-msplit' | 'bstream-msplit-v2':
                 bsz = params['bsz']
                 args |= {'msplit': block[1], 'bsz': bsz, 'blockx': blockx,
-                         'preload_c': bool(params.get('preload_c', False))}
+                         'preload_c': bool(params.get('preload-c', False))}
                 meta['shared'] = 2*bsz*blockx*dsize*args['width']
             case 'cstream-ksplit' | 'cstream-ksplit-v2':
                 csz = params['csz']
                 args |= {'ksplit': block[1], 'csz': csz, 'blockx': blockx,
-                         'preload_c': bool(params.get('preload_c', False))}
+                         'preload_c': bool(params.get('preload-c', False))}
                 meta['shared'] = (block[1] - 1)*csz*blockx*dsize*args['width']
             case _:
                 args['blockx'] = blockx
@@ -146,7 +146,7 @@ class PTXMatMul(MatMul):
 
         args |= setup
         if tpl.startswith('dmma-asmem'):
-            stealing = bool(params['block_stealing'])
+            stealing = bool(params['block-stealing'])
             args |= {'a_copy_threads': 32*warps, 'block_stealing': stealing}
 
             # Shared memory: A, plus a barrier and mailbox when stealing
@@ -269,7 +269,7 @@ class PTXMatMul(MatMul):
         tpl = kernel_cfg['template']
         nn = params['nn']
         tile = kernel_cfg['tile']
-        warp_map = kernel_cfg['warp_map']
+        warp_map = kernel_cfg['warp-map']
 
         match tpl:
             case 'dmma-steal-ws':
@@ -282,7 +282,7 @@ class PTXMatMul(MatMul):
                 raise ValueError('Unknown dense warp-specialized template '
                                  f'{tpl}')
 
-        n_comp_warps = warp_map['compute_count']
+        n_comp_warps = warp_map['compute-count']
         setup = self._dense_common(nn, n_comp_warps, tile, cc)
         if setup is None:
             return None
@@ -374,11 +374,11 @@ class PTXMatMul(MatMul):
         # Fall back on the default config when the SM has none of its own
         if cc:
             try:
-                return self._get_config(f'sm{cc[0]}{cc[1]}_{dtype}')
+                return self._get_config(f'sm{cc[0]}{cc[1]}-{dtype}')
             except FileNotFoundError:
                 pass
 
-        return self._get_config(f'default_{dtype}')
+        return self._get_config(f'default-{dtype}')
 
     def _matmul_stats(self, dtype, cc):
         nnz = np.count_nonzero(self.A)
@@ -388,12 +388,12 @@ class PTXMatMul(MatMul):
             'k': self.k,
             'n': self.n,
             'beta': self.beta,
-            'beta_zero': self.beta == 0,
+            'beta-zero': self.beta == 0,
             'aligne': self.aligne,
             'nnz': nnz,
             'density': nnz / self.A.size,
-            'unique_abs': len(np.unique(np.abs(self.A))),
-            'k_used': len(self.bix),
+            'unique-abs': len(np.unique(np.abs(self.A))),
+            'k-used': len(self.bix),
             'cc': list(cc),
         }
 
