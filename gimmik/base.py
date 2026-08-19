@@ -29,11 +29,11 @@ _SIG_ARGS = {
     },
     SIG_BDESC_CDESC: {
         'baked': ('b_desc', 'c_desc'),
-        'runtime': None
+        'runtime': ('n', 'b_desc', 'c_desc')
     },
     SIG_BDESC_C: {
         'baked': ('b_desc', 'c'),
-        'runtime': None
+        'runtime': ('n', 'b_desc', 'c', 'ldc')
     }
 }
 
@@ -246,12 +246,19 @@ class MatMul:
                 args = baseargs | exargs
                 meta = basemeta | exmeta
 
+                # A kernel may ask for n at runtime even when we have it
+                nbaked = self.n is not None and meta.pop('nbaked', True)
+
+                # Render such a kernel as though n had not been given
+                if not nbaked:
+                    args |= {'n': None, 'ldb': None, 'ldc': None}
+
                 # Render the kernel template
                 src = self._render_kernel(dtype, name, args)
 
                 # Post-process the metadata
                 meta['tplname'] = name
-                self._process_meta(meta)
+                self._process_meta(meta, nbaked)
 
                 # Yield the source and metadata and await a response
                 resp = yield (src, meta)
@@ -271,7 +278,7 @@ class MatMul:
     def launch_config(self, meta, n):
         # Resolve the launch description of a kernel for a given n
         if (launch := meta.get('launch')) is None:
-            raise ValueError('Kernel has a fixed launch geometry')
+            raise ValueError('Kernel does not describe its launch geometry')
 
         cfg = {}
 
@@ -294,20 +301,20 @@ class MatMul:
     def _launch_description(self, meta):
         return {}
 
-    def _process_meta(self, meta):
-        # Kernels which work out a geometry of their own describe nothing
-        if 'grid' in meta:
-            meta['launch'] = {}
-        else:
-            meta['launch'] = self._launch_description(meta)
+    def _process_meta(self, meta, nbaked):
+        # Take the description a kernel gives, else derive one for its grid
+        if 'launch' not in meta:
+            if 'grid' in meta:
+                meta['launch'] = {'grid': tuple(meta['grid'])}
+            else:
+                meta['launch'] = self._launch_description(meta)
 
-        # With n baked in the geometry is fixed, so resolve and drop it
-        if self.n is not None:
+        # With n baked in the geometry is fixed, so resolve it up front
+        if nbaked:
             meta |= self.launch_config(meta, self.n)
-            del meta['launch']
 
         sig = meta.setdefault('sig', SIG_BC)
-        args = _SIG_ARGS[sig]['baked' if self.n is not None else 'runtime']
+        args = _SIG_ARGS[sig]['baked' if nbaked else 'runtime']
 
         if args is None:
             raise ValueError(f'Signature {sig} needs n to be baked in')
@@ -336,6 +343,10 @@ class MatMul:
         if missing := prepared - set(operands):
             raise ValueError('Arguments left undescribed by operands: '
                              f'{", ".join(sorted(missing))}')
+
+    def operands(self, meta, n=None, ldb=None, ldc=None):
+        # Operand descriptions, resolved against the sizes of a launch
+        return meta['operands']
 
     def pack_a(self, meta, a=None):
         # Lay A out as the kernel described by meta expects to find it

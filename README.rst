@@ -65,7 +65,9 @@ kernel at all.
 
 The number of columns of B may either be baked into the kernel, by passing
 ``n`` together with the leading dimensions ``ldb`` and ``ldc``, or left as a
-runtime argument by passing none of them.
+runtime argument by passing none of them.  Passing them is a licence to
+specialise rather than an instruction to, and an individual kernel may still
+take its sizes at runtime; consult ``meta['args']`` to see which it did.
 
 Call signatures
 ---------------
@@ -84,8 +86,8 @@ Signature       Arguments, n baked     Arguments, n at runtime
 =============== ====================== ============================
 ``bc``          ``(b, c)``             ``(n, b, ldb, c, ldc)``
 ``abc``         ``(a, b, c)``          ``(a, n, b, ldb, c, ldc)``
-``bdesc-c``     ``(b_desc, c)``        not available
-``bdesc-cdesc`` ``(b_desc, c_desc)``   not available
+``bdesc-c``     ``(b_desc, c)``        ``(n, b_desc, c, ldc)``
+``bdesc-cdesc`` ``(b_desc, c_desc)``   ``(n, b_desc, c_desc)``
 =============== ====================== ============================
 
 Arguments named ``_desc`` are TMA tensor map descriptors rather than
@@ -130,7 +132,7 @@ bytes to upload.
 
 ``pack_a`` returns a one dimensional contiguous array which the caller copies
 into a buffer of at least ``spec['nbytes']`` bytes, aligned to
-``spec['align']``, where ``spec`` is ``meta['operands']['a']``.  Its data type
+``spec['align']``, where ``spec`` is ``mm.operands(meta)['a']``.  Its data type
 is ``spec['dtype']``, which need not be the type the kernel was generated
 for.  The buffer must stay valid and unmodified for as long as the kernel is
 used; kernels only read it.
@@ -159,11 +161,13 @@ Passing operands as tensor maps
 An argument named ``b_desc`` or ``c_desc`` is not a pointer but the address of
 a TMA tensor map, which the caller encodes on the host before launch.  GiMMiK
 states everything it requires of that map in ``meta['operands']``, keyed by
-the argument name, so nothing has to be inferred from the kernel.
+the argument name, so nothing has to be inferred from the kernel.  Ask for the
+descriptions through ``operands``, whose sizes let a kernel which takes them at
+runtime be described as precisely as one which baked them in.
 
 .. code:: python
 
-    for name, spec in meta['operands'].items():
+    for name, spec in mm.operands(meta, n, ldb, ldc).items():
         if spec['kind'] == 'tensormap':
             ...     # encode a map for spec['operand'] and pass its address
 
@@ -240,13 +244,12 @@ Metadata is only meaningful to the generator which produced it, and is
 consumed by ``pack_a``; do not construct it by hand or move it between
 generators.
 
-When ``n`` is baked the geometry is fixed, and the metadata carries it
-directly.  When ``n`` is left to runtime the geometry is instead a function of
-it, which the metadata describes under the ``launch`` key.  The key is present
-only in this second case, and is empty on platforms which have no launch
-geometry at all.  Each entry maps a geometry parameter onto a tuple of axes,
-where an integer axis is a constant and a mapping axis is
-``ceil(n / div) * mul``, with ``mul`` defaulting to one.
+The ``launch`` key describes the geometry as a function of ``n``, and every
+kernel carries it; it is empty only on platforms which have no launch geometry
+at all.  Each entry maps a geometry parameter onto a tuple of axes, where an
+integer axis is a constant and a mapping axis is ``ceil(n / div) * mul``, with
+``mul`` defaulting to one.  A kernel with ``n`` baked in has a fixed geometry,
+which the metadata additionally carries resolved.
 
 .. code:: python
 
@@ -259,7 +262,9 @@ where an integer axis is a constant and a mapping axis is
 Being plain data, the description can be serialised alongside the kernel
 source, allowing an application compiled ahead of time to work out its own
 geometry with no access to the generator.  Callers which have a generator to
-hand may instead evaluate the description with ``launch_config``.
+hand may instead evaluate the description with ``launch_config``, which works
+for every kernel and is the one way of asking which does not need to know
+whether ``n`` was baked in.
 
 .. code:: python
 
