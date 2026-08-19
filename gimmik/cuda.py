@@ -56,4 +56,4 @@ class CUDAMatMul(MatMul):
     def _launch_description(self, meta):
         div = meta['block'][0]*meta['width']
 
-        return {'grid': ({'div': div}, 1, 1)}
+        return {'grid': ({'div': div}, 1, 1), 'block': meta['block']}

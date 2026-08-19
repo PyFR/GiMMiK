@@ -244,9 +244,12 @@ Metadata is only meaningful to the generator which produced it, and is
 consumed by ``pack_a``; do not construct it by hand or move it between
 generators.
 
-The ``launch`` key describes the geometry as a function of ``n``, and every
-kernel carries it; it is empty only on platforms which have no launch geometry
-at all.  Each entry maps a geometry parameter onto a tuple of axes, where an
+The ``launch`` key describes the whole geometry as a function of ``n``, and
+every kernel carries it; it is empty only on platforms which have no launch
+geometry at all.  Every parameter the platform needs to launch the kernel
+appears in it, including those which do not vary with ``n``, so a caller has
+one place to read rather than a description for some and metadata for the
+rest.  Each entry maps a geometry parameter onto a tuple of axes, where an
 integer axis is a constant and a mapping axis is ``ceil(n / div) * mul``, with
 ``mul`` defaulting to one.  A kernel with ``n`` baked in has a fixed geometry,
 which the metadata additionally carries resolved.
@@ -256,8 +259,9 @@ which the metadata additionally carries resolved.
     mm = CUDAMatMul(2.0*mat, beta=0.0)
     src, metadata = next(mm.kernels(np.float32))
 
-    # A grid of ceil(n / 128) by 1 by 1
-    metadata['launch'] == {'grid': ({'div': 128}, 1, 1)}
+    # A grid of ceil(n / 128) by 1 by 1, of blocks of 128 threads
+    metadata['launch'] == {'grid': ({'div': 128}, 1, 1),
+                           'block': (128, 1, 1)}
 
 Being plain data, the description can be serialised alongside the kernel
 source, allowing an application compiled ahead of time to work out its own
@@ -268,8 +272,9 @@ whether ``n`` was baked in.
 
 .. code:: python
 
-    # Grid needed to multiply a B with 40000 columns
-    grid = mm.launch_config(metadata, 40000)['grid']
+    # Geometry needed to multiply a B with 40000 columns
+    cfg = mm.launch_config(metadata, 40000)
+    grid, block = cfg['grid'], cfg['block']
 
 The available generators are ``CMatMul``, ``COpenMPMatMul``, ``CUDAMatMul``,
 ``HIPMatMul``, ``ISPCMatMul``, ``MetalMatMul``, ``OpenCLMatMul``, and

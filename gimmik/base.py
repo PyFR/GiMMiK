@@ -302,12 +302,15 @@ class MatMul:
         return {}
 
     def _process_meta(self, meta, nbaked):
-        # Take the description a kernel gives, else derive one for its grid
-        if 'launch' not in meta:
-            if 'grid' in meta:
-                meta['launch'] = {'grid': tuple(meta['grid'])}
-            else:
-                meta['launch'] = self._launch_description(meta)
+        # Let a kernel override the parts of the geometry it works out itself
+        launch = self._launch_description(meta)
+
+        if 'launch' in meta:
+            launch |= meta['launch']
+        elif 'grid' in meta:
+            launch |= {'grid': tuple(meta['grid'])}
+
+        meta['launch'] = launch
 
         # With n baked in the geometry is fixed, so resolve it up front
         if nbaked:

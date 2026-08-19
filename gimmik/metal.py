@@ -134,7 +134,7 @@ class MetalMatMul(MatMul):
     def _launch_description(self, meta):
         tg = meta['threadgroup']
 
-        return {'grid': ({'div': meta['width']}, tg[1], 1)}
+        return {'grid': ({'div': meta['width']}, tg[1], 1), 'threadgroup': tg}
 
     def _tile_nz(self):
         # 8x8 tiles of A which hold at least one non-zero

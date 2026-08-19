@@ -64,7 +64,6 @@ class OpenCLMatMul(MatMul):
         # Round up as the work group size here is a hard requirement
         if lws is not None:
             gws = ({'div': width*lws[0], 'mul': lws[0]}, lws[1])
+            return {'global_work_size': gws, 'local_work_size': lws}
         else:
-            gws = ({'div': width},)
-
-        return {'global_work_size': gws}
+            return {'global_work_size': ({'div': width},)}
