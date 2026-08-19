@@ -9,17 +9,24 @@ constant ulong amask[] = { ${', '.join(f'{v}ul' for v in amask)} };
 
 [[max_total_threads_per_threadgroup(${nthread})]]
 kernel void ${kname}(device const ${sdtype}* a,
-                     device const ${sdtype}* b, device ${sdtype}* c,
+                     constant int& n_,
+                     device const ${sdtype}* b, constant int& ldb_,
+                     device ${sdtype}* c, constant int& ldc_,
                      uint tgpos [[threadgroup_position_in_grid]],
                      uint tidtg [[thread_index_in_threadgroup]],
                      uint sgid [[simdgroup_index_in_threadgroup]],
                      uint lane [[thread_index_in_simdgroup]])
 {
+    const long n = n_, ldb = ldb_, ldc = ldc_;
+
     threadgroup ${sdtype} bp[${kp*bs}];
     threadgroup ${sdtype} ix[64];
 
     const long col0 = (long)tgpos*${w};
     const device ${sdtype}* bcol = b + col0;
+
+## A panel which lies wholly inside B needs no bounds checking at all
+    const bool full = col0 + ${w} <= n;
 
 ## Rows of the panel past the end of B contribute nothing
 % if kp != k:
@@ -27,10 +34,21 @@ kernel void ${kname}(device const ${sdtype}* a,
         bp[i] = 0.0;
 
 % endif
-    for (uint i = tidtg; i < ${k*w}; i += ${nthread})
+    if (full)
     {
-        uint r = i / ${w}, cc = i - r*${w};
-        bp[r*${bs} + cc] = ${bload};
+        for (uint i = tidtg; i < ${k*w}; i += ${nthread})
+        {
+            uint r = i / ${w}, cc = i - r*${w};
+            bp[r*${bs} + cc] = bcol[r*ldb + cc];
+        }
+    }
+    else
+    {
+        for (uint i = tidtg; i < ${k*w}; i += ${nthread})
+        {
+            uint r = i / ${w}, cc = i - r*${w};
+            bp[r*${bs} + cc] = (col0 + cc < n) ? bcol[r*ldb + cc] : 0.0;
+        }
     }
 
 ## Each lane learns which element of the fragment it holds
@@ -43,10 +61,8 @@ kernel void ${kname}(device const ${sdtype}* a,
     simdgroup_load(im, ix, 8);
 
     const uint eo = (uint)im.thread_elements()[0];
-% if cond:
     const ushort lrow = eo >> 3;
     const ushort lcol = eo & 7;
-% endif
 
     for (uint mt = sgid; mt < ${ntm}; mt += ${ns})
     {
@@ -83,34 +99,32 @@ kernel void ${kname}(device const ${sdtype}* a,
             }
         }
 
-% if cond:
         const uint grow = mt*8 + lrow;
 
-% endif
-        #pragma clang loop unroll(full)
-        for (ushort j = 0; j < ${nw}; j++)
+## Whole 8x8 stores need every row and column of the tile to be live
+        if (${cond})
         {
-% if cond:
-            if (${cond})
+            #pragma clang loop unroll(full)
+            for (ushort j = 0; j < ${nw}; j++)
             {
-                device ${sdtype}* cp = c + mt*${8*ldc}L + col0 + j*8;
+                device ${sdtype}* cp = c + mt*8*ldc + col0 + j*8;
 ${store}
             }
-            else if (grow < ${m})
+        }
+        else if (grow < ${m})
+        {
+            #pragma clang loop unroll(full)
+            for (ushort j = 0; j < ${nw}; j++)
             {
                 const long cc = col0 + j*8 + lcol;
-                device ${sdtype}* q = c + (long)grow*${ldc}L + cc;
+                device ${sdtype}* q = c + grow*ldc + cc;
 
-                if (cc < ${n})
+                if (cc < n)
                     q[0] = ${e0};
 
-                if (cc + 1 < ${n})
+                if (cc + 1 < n)
                     q[1] = ${e1};
             }
-% else:
-            device ${sdtype}* cp = c + mt*${8*ldc}L + col0 + j*8;
-${store}
-% endif
         }
     }
 }

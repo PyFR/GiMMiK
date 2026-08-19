@@ -10,8 +10,7 @@
       "threadgroup": [256, 1, 1],
       "width": 1,
       "params": {"w": 32, "pad": 0},
-      "variant": "dense/w32-s8-p0",
-      "conditions": {"field": "n", "is-not": null}
+      "variant": "dense/w32-s8-p0"
     },
     {
       "template": "dense",
@@ -20,8 +19,7 @@
       "threadgroup": [256, 1, 1],
       "width": 1,
       "params": {"w": 32, "pad": 8},
-      "variant": "dense/w32-s8-p8",
-      "conditions": {"field": "n", "is-not": null}
+      "variant": "dense/w32-s8-p8"
     },
     {
       "template": "dense",
@@ -30,8 +28,7 @@
       "threadgroup": [512, 1, 1],
       "width": 1,
       "params": {"w": 32, "pad": 0},
-      "variant": "dense/w32-s16-p0",
-      "conditions": {"field": "n", "is-not": null}
+      "variant": "dense/w32-s16-p0"
     },
     {
       "template": "dense",
@@ -40,8 +37,7 @@
       "threadgroup": [512, 1, 1],
       "width": 1,
       "params": {"w": 32, "pad": 8},
-      "variant": "dense/w32-s16-p8",
-      "conditions": {"field": "n", "is-not": null}
+      "variant": "dense/w32-s16-p8"
     },
     {
       "template": "dense",
@@ -50,8 +46,7 @@
       "threadgroup": [256, 1, 1],
       "width": 1,
       "params": {"w": 64, "pad": 8},
-      "variant": "dense/w64-s8-p8",
-      "conditions": {"field": "n", "is-not": null}
+      "variant": "dense/w64-s8-p8"
     },
     {
       "template": "dense",
@@ -60,8 +55,7 @@
       "threadgroup": [512, 1, 1],
       "width": 1,
       "params": {"w": 64, "pad": 8},
-      "variant": "dense/w64-s16-p8",
-      "conditions": {"field": "n", "is-not": null}
+      "variant": "dense/w64-s16-p8"
     },
     {
       "template": "dense",
@@ -70,8 +64,7 @@
       "threadgroup": [1024, 1, 1],
       "width": 1,
       "params": {"w": 64, "pad": 8},
-      "variant": "dense/w64-s32-p8",
-      "conditions": {"field": "n", "is-not": null}
+      "variant": "dense/w64-s32-p8"
     },
     {
       "template": "dense",
@@ -80,8 +73,7 @@
       "threadgroup": [256, 1, 1],
       "width": 1,
       "params": {"w": 128, "pad": 8},
-      "variant": "dense/w128-s8-p8",
-      "conditions": {"field": "n", "is-not": null}
+      "variant": "dense/w128-s8-p8"
     },
     {
       "template": "cstream",

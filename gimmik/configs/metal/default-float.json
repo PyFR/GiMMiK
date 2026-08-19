@@ -13,7 +13,6 @@
       "variant": "dense/w32-s8-p0",
       "conditions": {
         "all": [
-          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
@@ -33,7 +32,6 @@
       "variant": "dense/w32-s8-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
@@ -53,7 +51,6 @@
       "variant": "dense/w32-s16-p0",
       "conditions": {
         "all": [
-          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
@@ -73,7 +70,6 @@
       "variant": "dense/w32-s16-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
@@ -93,7 +89,6 @@
       "variant": "dense/w64-s8-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
@@ -113,7 +108,6 @@
       "variant": "dense/w64-s16-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
@@ -133,7 +127,6 @@
       "variant": "dense/w64-s32-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [
@@ -153,7 +146,6 @@
       "variant": "dense/w128-s8-p8",
       "conditions": {
         "all": [
-          {"field": "n", "is-not": null},
           {"field": "m", "gte": 16},
           {"field": "k", "gte": 16},
           {"any": [

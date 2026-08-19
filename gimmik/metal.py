@@ -173,8 +173,8 @@ class MetalMatMul(MatMul):
 
         args |= self._dense_tplargs(w, ns, pad, ntm, ntk, kp, amask, skip)
         meta |= {
-            'sig': SIG_ABC, 'threadgroup_mem_size': tgmem,
-            'grid': (-(-self.n // w)*nthread, 1, 1),
+            'sig': SIG_ABC, 'threadgroup_mem_size': tgmem, 'nbaked': False,
+            'launch': {'grid': ({'div': w, 'mul': nthread}, 1, 1)},
             'operands': {
                 'a': {'dtype': adtype, 'align': 16,
                       'nbytes': ntm*ntk*64*adtype.itemsize}
@@ -185,47 +185,35 @@ class MetalMatMul(MatMul):
         return tpl, args, meta
 
     def _dense_tplargs(self, w, ns, pad, ntm, ntk, kp, amask, skip):
-        m, n, ldb, ldc = self.m, self.n, self.ldb, self.ldc
+        m = self.m
 
-        # A partial panel must not read past the end of a row of B
-        if n % w:
-            bload = f'(col0 + cc < {n}) ? bcol[r*{ldb}L + cc] : 0.0'
-        else:
-            bload = f'bcol[r*{ldb}L + cc]'
-
-        # Whole 8x8 stores need every row and column of the tile to be live
-        conds = []
-
+        # A tile short of rows has to be stored an element at a time
         if m % 8:
-            conds.append(f'mt + 1 < {ntm}')
-
-        if n % w:
-            conds.append(f'col0 + j*8 + 8 <= {n}')
-
-        cond = ' && '.join(conds)
+            cond = f'mt + 1 < {ntm} && full'
+        else:
+            cond = 'full'
 
         if self.beta == 0:
-            body = [f'simdgroup_store(acc[j], cp, {ldc});']
+            body = ['simdgroup_store(acc[j], cp, ldc);']
             e0, e1 = 'V0', 'V1'
         else:
             scale = '' if self.beta == 1 else f'{self.beta}*'
             acc = 'acc[j].thread_elements()'
             body = ['simdgroup_float8x8 cf;',
-                    f'simdgroup_load(cf, cp, {ldc});',
+                    'simdgroup_load(cf, cp, ldc);',
                     f'{acc} += {scale}cf.thread_elements();',
-                    f'simdgroup_store(acc[j], cp, {ldc});']
+                    'simdgroup_store(acc[j], cp, ldc);']
             e0, e1 = f'V0 + {scale}q[0]', f'V1 + {scale}q[1]'
 
         e0 = e0.replace('V0', 'acc[j].thread_elements()[0]')
         e1 = e1.replace('V1', 'acc[j].thread_elements()[1]')
 
-        pre = ' '*(16 if cond else 12)
-        store = '\n'.join(pre + l for l in body)
+        store = '\n'.join(' '*16 + l for l in body)
 
         return {
             'w': w, 'ns': ns, 'bs': w + pad, 'nw': w // 8, 'nthread': 32*ns,
             'ntm': ntm, 'ntk': ntk, 'kp': kp, 'amask': amask, 'skip': skip,
-            'bload': bload, 'cond': cond, 'store': store, 'e0': e0, 'e1': e1
+            'cond': cond, 'store': store, 'e0': e0, 'e1': e1
         }
 
     def _dense_packer(self, ntm, ntk, nz):
