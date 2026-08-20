@@ -1,5 +1,7 @@
 from gimmik.base import MatMul
 
+import numpy as np
+
 
 class HIPMatMul(MatMul):
     platform = 'hip'
@@ -10,7 +12,10 @@ class HIPMatMul(MatMul):
 
     def _kernel_generators(self, dtype, dsize, *, sigs, gcn_arch=None,
                            warp_size=64):
-        if not self._unrolled_viable():
+        arch = gcn_arch.partition(':')[0] if gcn_arch is not None else None
+        mfma_supported = dsize == 8 and arch in {'gfx942', 'gfx950'}
+
+        if not self._unrolled_viable() and not mfma_supported:
             return
 
         max_block_threads = 1024
@@ -91,6 +96,62 @@ class HIPMatMul(MatMul):
                     )
                 } | wmeta
                 yield from emit_preload('cstream-ksplit', args, meta)
+
+        if mfma_supported:
+            packed_mfma_tiles = [
+                (64, 64, 8, 64, 4),
+                (128, 64, 8, 64, 4),
+                (64, 128, 8, 64, 4),
+                (128, 128, 8, 64, 4),
+            ]
+            widths = ([2] if self.aligne is not None and self.aligne % 2 == 0
+                      else [1])
+
+            for width in widths:
+                wargs = ({'dtype': f'{dtype}{width}', 'width': width,
+                          'sdtype': dtype} if width > 1 else {})
+                wpfx = f'w{width}-' if width > 1 else ''
+
+                for mt, nt, kt, blockx, blocky in packed_mfma_tiles:
+                    a_hex, m_pad, k_pad = self._dense_mfma_lane_bake(mt, kt)
+                    block = (blockx, blocky, 1)
+                    args = {
+                        'MT': mt, 'NT': nt // width, 'KT': kt,
+                        'blockx': blockx, 'blocky': blocky,
+                        'a_hex': a_hex, 'm_pad': m_pad, 'k_pad': k_pad,
+                    } | wargs
+                    wmeta = {'width': width} if width > 1 else {}
+                    meta = {
+                        'block': block, 'shared': 2*kt*nt*dsize,
+                        'launch': {
+                            'grid': ({'div': nt}, -(-self.m // mt), 1)
+                        },
+                        'variant': f'mfma-tile-gemm/{wpfx}'
+                                   f'mt{mt}-nt{nt}-kt{kt}',
+                    } | wmeta
+                    yield from emit('mfma-tile-gemm', args, meta)
+
+    def _dense_mfma_lane_bake(self, mt, kt):
+        # Pack A in the lane order consumed by pairs of MFMA K groups.
+        if kt % 8:
+            raise ValueError('MFMA K tile must be a multiple of 8')
+
+        m_pad = -(-self.m // mt)*mt
+        k_pad = -(-self.k // kt)*kt
+        a_pad = np.zeros((m_pad, k_pad), dtype=np.float64)
+        a_pad[:self.m, :self.k] = self.A
+
+        packed = []
+        for row16 in range(m_pad // 16):
+            for ktile in range(k_pad // kt):
+                for kgp in range(kt // 8):
+                    for lane in range(64):
+                        group, row = divmod(lane, 16)
+                        for pair_offset in range(2):
+                            kidx = ktile*kt + (2*kgp + pair_offset)*4 + group
+                            packed.append(a_pad[row16*16 + row, kidx])
+
+        return [float(x).hex() for x in packed], m_pad, k_pad
 
     def _launch_description(self, meta):
         div = meta['block'][0]*meta['width']
