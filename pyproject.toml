@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Generator of Matrix Multiplication Kernels"
 readme = "README.rst"
 license = "BSD-3-Clause"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     {name = "Freddie Witherden", email = "freddie@witherden.org"},
     {name = "Bartosz Wozniak", email = "bartosz.wozniak10@imperial.ac.uk"},
@@ -28,8 +28,6 @@ keywords = [
 ]
 classifiers = [
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",

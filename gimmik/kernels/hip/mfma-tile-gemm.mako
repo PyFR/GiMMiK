@@ -18,22 +18,13 @@
 ##
 <%
     mfma_k = 4
-    a_pair_groups = 2
     f64 = sdtype == 'double'
     apair_align = 16 if f64 else 8
 
+    acc4_t, apair_t = f'{kname}_acc4', f'{kname}_apair'
+    aligned_a = f'__builtin_assume_aligned(a, {apair_align})'
+
     nthreads = blockx*blocky
-
-    def check(bad, msg):
-        if bad:
-            raise ValueError(f'mfma-tile-gemm: {msg}')
-
-    check(nthreads % 64, 'block must be a whole number of wave64 waves')
-    check(MT % 16, 'MT must be a multiple of 16')
-    check(NT % 16, 'NT must be a multiple of 16')
-    check(KT % (mfma_k*a_pair_groups), 'KT must cover whole A pairs')
-    check(blocky <= 0, 'blocky must be positive')
-    check(width not in (1, 2, 4), 'width must be 1, 2 or 4')
 
     if f64:
         mfma = '__builtin_amdgcn_mfma_f64_16x16x4f64'
@@ -41,38 +32,31 @@
         mfma = '__builtin_amdgcn_mfma_f32_16x16x4f32'
 
     def c_row_offset(reg):
-        if f64:
-            return f'{4*reg} + g'
-        else:
-            return f'4*g + {reg}'
+        return f'{4*reg} + g' if f64 else f'4*g + {reg}'
 
-    valid_m_tiles = min(-(-m // 16), MT // 16)
-    n_tiles = NT // 16
-    k_groups = KT // mfma_k
-    k_group_pairs = k_groups // 2
-    nwaves = nthreads // 64
+    valid_m_tiles, n_tiles = min(-(-m // 16), MT // 16), NT // 16
+    k_group_pairs, nwaves = KT // (2*mfma_k), nthreads // 64
     mtpg = -(-valid_m_tiles // nwaves)
+
+    # Whether K spans more than one tile, so the buffers alternate
+    multi_ktile = KT < k_pad
+
     b_tile_elems = KT*NT
-    b_tile_iters = -(-b_tile_elems // nthreads)
+    b_tile_full, b_tile_tail = divmod(b_tile_elems, nthreads)
+    b_tile_iters = b_tile_full + bool(b_tile_tail)
 
     def m_tile_always_held(j):
         return (nwaves - 1)*mtpg + j < valid_m_tiles
 
     def acc(w, j, t):
-        if width == 1:
-            return f'acc_{j}_{t}'
-        else:
-            return f'acc_{w}_{j}_{t}'
+        return f'acc_{j}_{t}' if width == 1 else f'acc_{w}_{j}_{t}'
 
     def bval(kg, t, w):
-        if width == 1:
-            return f'bv_{kg}_{t}'
-        else:
-            return f'bv_{kg}_{t}.{"xyzw"[w]}'
+        return f'bv_{kg}_{t}' if width == 1 else f'bv_{kg}_{t}.{'xyzw'[w]}'
 
     def cval(j, t, reg):
         if width == 1:
-            return f'acc_{j}_{t}[{reg}]'
+            return f'{acc(0, j, t)}[{reg}]'
         else:
             parts = ', '.join(f'{acc(w, j, t)}[{reg}]' for w in range(width))
             return f'make_{dtype}({parts})'
@@ -84,8 +68,8 @@
         for reg in range(4)
     ]
 %>
-typedef ${sdtype} gimmik_acc4 __attribute__((ext_vector_type(4)));
-typedef ${sdtype} gimmik_apair __attribute__((ext_vector_type(2)));
+typedef ${sdtype} ${acc4_t} __attribute__((ext_vector_type(4)));
+typedef ${sdtype} ${apair_t} __attribute__((ext_vector_type(2)));
 
 ## ---------------------------------------------------------------------------
 ## Tile-level global prefetch and LDS staging helpers
@@ -95,15 +79,15 @@ typedef ${sdtype} gimmik_apair __attribute__((ext_vector_type(2)));
 ap[((row_base / 16 + wmt + ${j})*${k_pad // 8} + ${kbase} + ${kgp})*64 + lane]\
 </%def>
 
-<%def name="a_operand_prefetch_tile(row_offset_expr, slot)">
+<%def name="a_operand_prefetch_tile(row_offset_expr, slot)">\
 <%
     kbase = f'(({row_offset_expr}) / {KT})*{k_group_pairs}'
-%>
+%>\
 % for j in range(mtpg):
 %  for kgp in range(k_group_pairs):
 <%
     dst = f'a_pair_{slot}_{j}_{kgp}'
-%>
+%>\
 %   if m_tile_always_held(j):
         ${dst} = ${a_pair_expr(j, kgp, kbase)};
 %   else:
@@ -116,10 +100,13 @@ ap[((row_base / 16 + wmt + ${j})*${k_pad // 8} + ${kbase} + ${kgp})*64 + lane]\
 % endfor
 </%def>
 
-<%def name="b_prefetch_tile_frag(row_offset_expr, slot, pp)">
+<%def name="b_prefetch_tile_frag(row_offset_expr, slot, pp)">\
+<%
+    dst = f'b_next_{slot}_{pp}'
+%>\
         {
             const int idx = tid + ${pp*nthreads};
-% if (pp + 1)*nthreads > b_tile_elems:
+% if pp == b_tile_full:
             if (idx < ${b_tile_elems})
 % endif
             {
@@ -129,72 +116,69 @@ ap[((row_base / 16 + wmt + ${j})*${k_pad // 8} + ${kbase} + ${kgp})*64 + lane]\
                 const int col = col_base + cc;
                 const bool have = fast_b_tile || (krow < ${k} && col < n);
 
-                b_next_${slot}_${pp} =
-                    have ? b[krow*ldb + col] : make_zero();
+                ${dst} = have ? b[krow*ldb + col] : make_zero();
             }
         }
 </%def>
 
-<%def name="b_prefetch_tile(row_offset_expr, slot)">
+<%def name="b_prefetch_tile(row_offset_expr, slot)">\
         {
-        const bool fast_b_tile = (${row_offset_expr} + ${KT} <= ${k}) && fast_col;
+        const bool krows_ok = ${row_offset_expr} + ${KT} <= ${k};
+        const bool fast_b_tile = krows_ok && fast_col;
 % for pp in range(b_tile_iters):
-${b_prefetch_tile_frag(row_offset_expr, slot, pp)}
+${b_prefetch_tile_frag(row_offset_expr, slot, pp)}\
 % endfor
         }
 </%def>
 
-<%def name="b_write_tile_frag(buf_expr, slot, pp)">
+<%def name="b_write_tile_frag(buf_expr, slot, pp)">\
+<%
+    store = f'{kname}_Bs[{buf_expr} + idx] = b_next_{slot}_{pp};'
+%>\
         {
             const int idx = tid + ${pp*nthreads};
-% if (pp + 1)*nthreads > b_tile_elems:
+% if pp == b_tile_full:
             if (idx < ${b_tile_elems})
+                ${store}
+% else:
+            ${store}
 % endif
-            ${kname}_Bs[${buf_expr} + idx] = b_next_${slot}_${pp};
         }
 </%def>
 
-<%def name="b_write_tile(buf_expr, slot)">
+<%def name="b_write_tile(buf_expr, slot)">\
 % for pp in range(b_tile_iters):
-${b_write_tile_frag(buf_expr, slot, pp)}
+${b_write_tile_frag(buf_expr, slot, pp)}\
 % endfor
 </%def>
-
-<%def name="b_prefetch_write_tile(row_offset_expr, buf_expr, slot)">
-${b_prefetch_tile(row_offset_expr, slot)}
-${b_write_tile(buf_expr, slot)}
-</%def>
-
 ## ---------------------------------------------------------------------------
 ## Wave-level MFMA accumulation
 ## ---------------------------------------------------------------------------
 
-<%def name="mfma_accumulate(j, kgp, kg, acomp)">
-            const ${sdtype} av = curbuf ? a_pair_1_${j}_${kgp}.${acomp}
-                                        : a_pair_0_${j}_${kgp}.${acomp};
-% for t in range(n_tiles):
-%  for w in range(width):
-            ${acc(w, j, t)} = ${mfma}(
-                av, ${bval(kg, t, w)}, ${acc(w, j, t)}, 0, 0, 0);
-%  endfor
-% endfor
-</%def>
-
-<%def name="mfma_k_group(kgp, which)">
+<%def name="mfma_k_group(kgp, which)">\
 <%
-    kg = 2*kgp + which
-    acomp = 'xy'[which]
-%>
+    kg, acomp = 2*kgp + which, 'xy'[which]
+%>\
 % for t in range(n_tiles):
         const ${dtype} bv_${kg}_${t} = ${kname}_Bs[
-            curbuf*${b_tile_elems} + (${kg*4} + g)*${NT} + ${t*16} + p];
+            curbuf*${b_tile_elems} + (${kg*mfma_k} + g)*${NT} + ${t*16} + p];
 % endfor
 % for j in range(mtpg):
-% if not m_tile_always_held(j):
+<%
+    av0, av1 = (f'a_pair_{s}_{j}_{kgp}.{acomp}' for s in (0, 1))
+    av = f'curbuf ? {av1} : {av0}' if multi_ktile else av0
+%>\
+%  if not m_tile_always_held(j):
         if (wmt + ${j} < ${valid_m_tiles})
-% endif
+%  endif
         {
-${mfma_accumulate(j, kgp, kg, acomp)}
+            const ${sdtype} av = ${av};
+%  for t in range(n_tiles):
+%   for w in range(width):
+            ${acc(w, j, t)} = ${mfma}(
+                av, ${bval(kg, t, w)}, ${acc(w, j, t)}, 0, 0, 0);
+%   endfor
+%  endfor
         }
 % endfor
 </%def>
@@ -203,13 +187,16 @@ ${mfma_accumulate(j, kgp, kg, acomp)}
 ## C epilogue helpers
 ## ---------------------------------------------------------------------------
 
-<%def name="c_epilogue_coords(j, t, reg)">
+<%def name="c_epilogue_coords(j, t, reg)">\
             const int mt = wmt + ${j};
             const int row = row_base + mt*16 + ${c_row_offset(reg)};
             const int col = col_base + ${t*16} + p;
 </%def>
 
-<%def name="store_c_epilogue_beta1(guarded)">
+<%def name="store_c_epilogue_beta1(guarded)">\
+<%
+    ind = ' '*16 if guarded else ' '*12
+%>\
 % for j, t, reg in c_epilogue_indices:
         ${dtype} c_old_${j}_${t}_${reg};
 %  if guarded:
@@ -219,78 +206,84 @@ ${mfma_accumulate(j, kgp, kg, acomp)}
 
 % for j, t, reg in c_epilogue_indices:
         {
-${c_epilogue_coords(j, t, reg)}
+${c_epilogue_coords(j, t, reg)}\
 %  if guarded:
             c_valid_${j}_${t}_${reg} = mt < ${valid_m_tiles} &&
                 (fast_row || row < ${m}) && (fast_col || col < n);
             if (c_valid_${j}_${t}_${reg})
 %  endif
-            c_old_${j}_${t}_${reg} = nt_load(&c[row*ldc + col]);
+${ind}c_old_${j}_${t}_${reg} = nt_load(&c[row*ldc + col]);
         }
 % endfor
 
 % for j, t, reg in c_epilogue_indices:
         {
-${c_epilogue_coords(j, t, reg)}
+${c_epilogue_coords(j, t, reg)}\
 %  if guarded:
             if (c_valid_${j}_${t}_${reg})
 %  endif
-            nt_store(&c[row*ldc + col],
-                     c_old_${j}_${t}_${reg} + ${cval(j, t, reg)});
+${ind}nt_store(&c[row*ldc + col],
+${ind}         c_old_${j}_${t}_${reg} + ${cval(j, t, reg)});
         }
 % endfor
 </%def>
 
-<%def name="store_c_epilogue_scalar(guarded)">
+<%def name="store_c_epilogue_scalar(guarded)">\
 % for j, t, reg in c_epilogue_indices:
+<%
+    tile_held = m_tile_always_held(j)
+    ind = ' '*12 if tile_held and not guarded else ' '*16
+%>\
         {
-${c_epilogue_coords(j, t, reg)}
+${c_epilogue_coords(j, t, reg)}\
 %  if guarded:
-            if (mt < ${valid_m_tiles} && (fast_row || row < ${m}) &&
-                (fast_col || col < n))
-%  elif not m_tile_always_held(j):
+            const bool row_ok = fast_row || row < ${m};
+            const bool col_ok = fast_col || col < n;
+            if (mt < ${valid_m_tiles} && row_ok && col_ok)
+%  elif not tile_held:
             if (mt < ${valid_m_tiles})
 %  endif
 %  if beta == 0:
-            nt_store(&c[row*ldc + col], ${cval(j, t, reg)});
+${ind}nt_store(&c[row*ldc + col], ${cval(j, t, reg)});
 %  else:
-            nt_store(&c[row*ldc + col], ${beta}*nt_load(&c[row*ldc + col])
-                                        + ${cval(j, t, reg)});
+${ind}nt_store(&c[row*ldc + col], ${beta}*nt_load(&c[row*ldc + col]) +
+${ind}         ${cval(j, t, reg)});
 %  endif
         }
 % endfor
 </%def>
 
-<%def name="store_c_epilogue(guarded)">
+<%def name="store_c_epilogue(guarded)">\
 % if beta == 1:
-${store_c_epilogue_beta1(guarded)}
+${store_c_epilogue_beta1(guarded)}\
 % else:
-${store_c_epilogue_scalar(guarded)}
+${store_c_epilogue_scalar(guarded)}\
 % endif
 </%def>
 
-__global__ __launch_bounds__(${blockx * blocky}) void
+__global__ __launch_bounds__(${nthreads}) void
 % if n is None:
 ${kname}(const ${sdtype}* __restrict__ a, int n,
-         const ${dtype}* __restrict__ b, int ldb,
-         ${dtype}* __restrict__ c, int ldc)
+         const ${dtype}* __restrict__ b, int ldb_,
+         ${dtype}* __restrict__ c, int ldc_)
 {
-% if width > 1:
+%  if width > 1:
     n = (n + ${width} - 1) / ${width};
-    ldb /= ${width};
-    ldc /= ${width};
-% endif
+    ldb_ /= ${width};
+    ldc_ /= ${width};
+%  endif
+    const long long ldb = ldb_;
+    const long long ldc = ldc_;
 % else:
 ${kname}(const ${sdtype}* __restrict__ a,
          const ${dtype}* __restrict__ b, ${dtype}* __restrict__ c)
 {
     const int n = ${-(-n // width)};
-    const ${'long long' if k * ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
-    const ${'long long' if m * ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
+    const ${'long long' if k*ldb >= width*2**31 else 'int'} ldb = ${ldb // width};
+    const ${'long long' if m*ldc >= width*2**31 else 'int'} ldc = ${ldc // width};
 % endif
     // A comes in pre-packed as row16-tile, K-group-pair, lane, pair-element
-    const gimmik_apair* __restrict__ ap =
-        (const gimmik_apair*)__builtin_assume_aligned(a, ${apair_align});
+    const ${apair_t}* ap = (const ${apair_t}*)${aligned_a};
 
     const int tid = threadIdx.y*${blockx} + threadIdx.x;
     const int lane = tid & 63;
@@ -303,46 +296,56 @@ ${kname}(const ${sdtype}* __restrict__ a,
     const int logical_bid = blockIdx.y*gridDim.x + blockIdx.x;
     const int m_tile = logical_bid % gridDim.y;
     const int n_tile = logical_bid / gridDim.y;
-    const int row_base = m_tile * ${MT};
-    const int col_base = n_tile * ${NT};
+    const int row_base = m_tile*${MT};
+    const int col_base = n_tile*${NT};
     const bool fast_col = col_base + ${NT} <= n;
     const bool fast_row = row_base + ${MT} <= ${m};
-    const bool fast_tile = fast_col & fast_row & (${nwaves * mtpg} <= ${valid_m_tiles});
+% if m_tile_always_held(mtpg - 1):
+    const bool fast_tile = fast_col && fast_row;
+% else:
+    const bool fast_tile = false;
+% endif
 
     __shared__ __align__(16) ${dtype} ${kname}_Bs[${2*b_tile_elems}];
 
 % for j in range(mtpg):
 %  for t in range(n_tiles):
 %   for w in range(width):
-    gimmik_acc4 ${acc(w, j, t)} = {0.0, 0.0, 0.0, 0.0};
+    ${acc4_t} ${acc(w, j, t)} = {0.0, 0.0, 0.0, 0.0};
 %   endfor
 %  endfor
 % endfor
 
 % for j in range(mtpg):
 %  for kgp in range(k_group_pairs):
-    gimmik_apair a_pair_0_${j}_${kgp};
-    gimmik_apair a_pair_1_${j}_${kgp};
+    ${apair_t} a_pair_0_${j}_${kgp};
+%   if multi_ktile:
+    ${apair_t} a_pair_1_${j}_${kgp};
+%   endif
 %  endfor
 % endfor
 % for pp in range(b_tile_iters):
     ${dtype} b_next_0_${pp};
+%  if multi_ktile:
     ${dtype} b_next_1_${pp};
+%  endif
 % endfor
 
-${a_operand_prefetch_tile('0', 0)}
-% if KT < k_pad:
-${a_operand_prefetch_tile(str(KT), 1)}
+${a_operand_prefetch_tile('0', 0)}\
+% if multi_ktile:
+${a_operand_prefetch_tile(str(KT), 1)}\
 % endif
-${b_prefetch_write_tile('0', '0', 0)}
-% if KT < k_pad:
-${b_prefetch_tile(str(KT), 1)}
+${b_prefetch_tile('0', 0)}\
+${b_write_tile('0', 0)}\
+% if multi_ktile:
+${b_prefetch_tile(str(KT), 1)}\
 % endif
     __syncthreads();
 
     for (int k0 = 0; k0 < ${k_pad}; k0 += ${KT})
     {
         const int curbuf = (k0 / ${KT}) & 1;
+% if multi_ktile:
         const int nextbuf = curbuf ^ 1;
         const int k_next = k0 + ${KT};
         const int k_next2 = k0 + ${2*KT};
@@ -351,11 +354,11 @@ ${b_prefetch_tile(str(KT), 1)}
         {
             if (curbuf)
             {
-${b_write_tile(f'nextbuf*{b_tile_elems}', 0)}
+${b_write_tile(f'nextbuf*{b_tile_elems}', 0)}\
             }
             else
             {
-${b_write_tile(f'nextbuf*{b_tile_elems}', 1)}
+${b_write_tile(f'nextbuf*{b_tile_elems}', 1)}\
             }
         }
 
@@ -363,18 +366,20 @@ ${b_write_tile(f'nextbuf*{b_tile_elems}', 1)}
         {
             if (curbuf)
             {
-${b_prefetch_tile('k_next2', 1)}
+${b_prefetch_tile('k_next2', 1)}\
             }
             else
             {
-${b_prefetch_tile('k_next2', 0)}
+${b_prefetch_tile('k_next2', 0)}\
             }
         }
+% endif
 % for kgp in range(k_group_pairs):
 %  for which in range(2):
-${mfma_k_group(kgp, which)}
+${mfma_k_group(kgp, which)}\
 %  endfor
 % endfor
+% if multi_ktile:
 
         if (k_next < ${k_pad})
         {
@@ -382,23 +387,24 @@ ${mfma_k_group(kgp, which)}
             {
                 if (curbuf)
                 {
-${a_operand_prefetch_tile('k_next2', 1)}
+${a_operand_prefetch_tile('k_next2', 1)}\
                 }
                 else
                 {
-${a_operand_prefetch_tile('k_next2', 0)}
+${a_operand_prefetch_tile('k_next2', 0)}\
                 }
             }
             __syncthreads();
         }
+% endif
     }
 
     if (fast_tile)
     {
-${store_c_epilogue(False)}
+${store_c_epilogue(False)}\
     }
     else
     {
-${store_c_epilogue(True)}
+${store_c_epilogue(True)}\
     }
 }

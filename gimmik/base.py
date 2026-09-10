@@ -1,3 +1,4 @@
+from functools import cached_property
 import itertools as it
 from importlib import resources
 import json
@@ -174,12 +175,20 @@ class MatMul:
         self._uuid = uuid4().hex
         self._packers = {}
 
-    def _unrolled_viable(self):
-        # True when the fully unrolled kernels can beat a vendor GEMM
-        nuq = len(np.unique(np.abs(self.A)))
-        density = np.count_nonzero(self.A) / self.A.size
+    @cached_property
+    def nnz(self):
+        return np.count_nonzero(self.A)
 
-        return nuq <= self.max_unique or density <= self.max_density
+    @cached_property
+    def unique_abs(self):
+        return len(np.unique(np.abs(self.A)))
+
+    def _unrolled_viable(self):
+        # True when A is sparse or repetitive enough to bake into the source
+        density = self.nnz / self.A.size
+
+        return (self.unique_abs <= self.max_unique or
+                density <= self.max_density)
 
     def kernels(self, dtype, kname='gimmik_mm', *, sigs=frozenset({SIG_BC}),
                 **kwargs):

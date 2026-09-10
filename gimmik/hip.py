@@ -28,10 +28,8 @@ class HIPMatMul(MatMul):
             if not self._usable_config(kcfg, sigs, stats, sparse_ok):
                 continue
 
-            prepared = self._get_render_args(kcfg, dtype, dsize)
-
-            if prepared is not None:
-                yield prepared
+            if args := self._get_render_args(kcfg, dtype, dsize):
+                yield args
 
     def _platform_config(self, dtype, arch):
         # Fall back on the default config when the arch has none of its own
@@ -44,8 +42,6 @@ class HIPMatMul(MatMul):
         return self._get_config(f'default-{dtype}')
 
     def _matmul_stats(self, dtype, arch, warp_size):
-        nnz = np.count_nonzero(self.A)
-
         return {
             'dtype': dtype,
             'm': self.m,
@@ -54,68 +50,69 @@ class HIPMatMul(MatMul):
             'beta': self.beta,
             'beta-zero': self.beta == 0,
             'aligne': self.aligne,
-            'nnz': nnz,
-            'density': nnz / self.A.size,
-            'unique-abs': len(np.unique(np.abs(self.A))),
+            'nnz': self.nnz,
+            'density': self.nnz / self.A.size,
+            'unique-abs': self.unique_abs,
             'k-used': len(self.bix),
             'gcn-arch': arch,
             'warp-size': warp_size
         }
 
     def _usable_config(self, kcfg, sigs, stats, sparse_ok):
+        conditions = kcfg.get('conditions')
+
+        # Pass over kernels whose signature the caller can not invoke
         if sig_of(kcfg) not in sigs:
             return False
+        # Pass over the unrolled kernels when A is too dense or too varied
         elif kcfg['family'] == 'sparse' and not sparse_ok:
             return False
-
-        condition = kcfg.get('conditions')
-
-        if condition is None:
+        # Take a kernel which places no demands on the operator
+        elif conditions is None:
             return True
+        # Otherwise decide on the conditions the kernel gives
         else:
-            return self._eval_condition(condition, stats)
+            return self._eval_condition(conditions, stats)
 
     def _get_render_args(self, kcfg, dtype, dsize):
         tpl, width = kcfg['template'], kcfg['width']
-        params = kcfg.get('params', {})
+        family, params = kcfg['family'], kcfg['params']
         block = tuple(kcfg['block'])
 
         args = {'width': width, 'blockx': block[0]}
-        meta = {'width': width, 'block': block, 'variant': kcfg['variant']}
+        meta = {'width': width, 'block': block, 'variant': kcfg['variant'],
+                'sig': sig_of(kcfg)}
 
         # Vector kernels move B and C through a wide element type
         if width > 1:
             args['dtype'] = f'{dtype}{width}'
 
-        match kcfg['family']:
-            case 'sparse':
-                prepared = self._sparse_args(tpl, params, block, dsize, args,
-                                             meta)
-            case 'dense':
-                prepared = self._dense_args(tpl, params, block, dtype, dsize,
-                                            args, meta)
+        match family, tpl:
+            case 'sparse', 'bstream-msplit' | 'cstream-ksplit':
+                meth = self._sparse_args
+            case 'dense', 'mfma-tile-gemm':
+                meth = self._dense_args
             case _:
-                raise ValueError(f'Unknown HIP kernel family for {tpl}')
+                raise ValueError(f'Unknown HIP kernel {family}/{tpl}')
 
-        if prepared is not None and self._fits(prepared[2]):
-            return prepared
+        meth(tpl, params, block, width, dsize, args, meta)
+
+        if self._fits_device_limits(meta):
+            return tpl, args, meta
         else:
             return None
 
-    def _fits(self, meta):
+    def _fits_device_limits(self, meta):
         bx, by, bz = meta['block']
-        shared = meta.get('shared', 0)
+        shared = meta['shared']
 
         return bx*by*bz <= self.max_threads and shared <= self.max_shared
 
-    def _sparse_args(self, tpl, params, block, dsize, args, meta):
-        width, blkx = args['width'], block[0]
-        preload = bool(params.get('preload-c', False))
+    def _sparse_args(self, tpl, params, block, width, dsize, args, meta):
+        blkx = block[0]
+        preload = params.get('preload-c', False)
 
         match tpl:
-            # B loading, C streaming and B streaming, C accumulating kernels
-            case 'cstream' | 'bstream':
-                pass
             # M-split B streaming, C accumulation kernel
             case 'bstream-msplit':
                 ms, bsz = block[1], params['bsz']
@@ -126,23 +123,15 @@ class HIPMatMul(MatMul):
                 ks, csz = block[1], params['csz']
                 args |= {'ksplit': ks, 'csz': csz, 'preload': preload}
                 meta['shared'] = (ks - 1)*csz*blkx*dsize*width
-            case _:
-                raise ValueError(f'Unknown HIP sparse template {tpl}')
 
-        return tpl, args, meta
-
-    def _dense_args(self, tpl, params, block, dtype, dsize, args, meta):
-        if tpl != 'mfma-tile-gemm':
-            raise ValueError(f'Unknown HIP dense template {tpl}')
-
-        width = args['width']
+    def _dense_args(self, tpl, params, block, width, dsize, args, meta):
         mt, nt, kt = params['mt'], params['nt'], params['kt']
 
-        # The kernel walks whole tiles, so A is padded out to cover them
+        # Pad A out to a whole number of tiles
         m_pad, k_pad = -(-self.m // mt)*mt, -(-self.k // kt)*kt
 
         # The MFMA takes its A fragments in the precision of B and C
-        adtype = np.dtype(np.float32 if dtype == 'float' else np.float64)
+        adtype = np.dtype(np.float32 if dsize == 4 else np.float64)
 
         # Each lane reads its pair of A values as one vector of two
         align = 2*adtype.itemsize
@@ -150,16 +139,14 @@ class HIPMatMul(MatMul):
         args |= {'MT': mt, 'NT': nt // width, 'KT': kt, 'k_pad': k_pad,
                  'blocky': block[1]}
         meta |= {
-            'sig': SIG_ABC, 'shared': 2*kt*nt*dsize,
-            'launch': {'grid': ({'div': nt}, -(-self.m // mt), 1)},
+            'shared': 2*kt*nt*dsize,
+            'launch': {'grid': ({'div': nt}, m_pad // mt, 1)},
             'operands': {
                 'a': {'dtype': adtype, 'align': align,
                       'nbytes': m_pad*k_pad*adtype.itemsize}
             },
             '_packer': self._dense_packer(m_pad, k_pad, adtype)
         }
-
-        return tpl, args, meta
 
     def _dense_packer(self, m_pad, k_pad, adtype):
         m, k = self.m, self.k
@@ -169,7 +156,7 @@ class HIPMatMul(MatMul):
             apad[:m, :k] = a
 
             # Split A into 16 row by 8 column blocks, one per MFMA pair group
-            t = apad.reshape(m_pad // 16, 16, k_pad // 8, 2, 4)
+            t = apad.reshape(-1, 16, k_pad // 8, 2, 4)
 
             # Then order each block by lane, so a lane reads its pair at once
             return np.ascontiguousarray(t.transpose(0, 2, 4, 1, 3)).reshape(-1)

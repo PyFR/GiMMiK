@@ -123,11 +123,33 @@
       "template": "mfma-tile-gemm",
       "family": "dense",
       "sig": "abc",
-      "block": [64, 4, 1],
+      "block": [64, 8, 1],
       "width": 4,
-      "params": {"mt": 64, "nt": 64, "kt": 8},
-      "variant": "mfma-tile-gemm/w4-mt64-nt64-kt8",
-      "conditions": {"field": "aligne", "divisible-by": 4}
+      "params": {"mt": 224, "nt": 64, "kt": 16},
+      "variant": "mfma-tile-gemm/w4-mt224-nt64-kt16-by8",
+      "conditions": {
+        "all": [
+          {"field": "aligne", "divisible-by": 4},
+          {"field": "k", "gt": 256},
+          {"field": "m", "gt": 176}
+        ]
+      }
+    },
+    {
+      "template": "mfma-tile-gemm",
+      "family": "dense",
+      "sig": "abc",
+      "block": [64, 8, 1],
+      "width": 4,
+      "params": {"mt": 224, "nt": 64, "kt": 8},
+      "variant": "mfma-tile-gemm/w4-mt224-nt64-kt8-by8",
+      "conditions": {
+        "all": [
+          {"field": "aligne", "divisible-by": 4},
+          {"field": "k", "gt": 256},
+          {"field": "m", "gt": 176}
+        ]
+      }
     },
     {
       "template": "mfma-tile-gemm",
@@ -135,29 +157,14 @@
       "sig": "abc",
       "block": [64, 4, 1],
       "width": 4,
-      "params": {"mt": 128, "nt": 64, "kt": 8},
-      "variant": "mfma-tile-gemm/w4-mt128-nt64-kt8",
-      "conditions": {"field": "aligne", "divisible-by": 4}
-    },
-    {
-      "template": "mfma-tile-gemm",
-      "family": "dense",
-      "sig": "abc",
-      "block": [64, 4, 1],
-      "width": 4,
-      "params": {"mt": 64, "nt": 128, "kt": 8},
-      "variant": "mfma-tile-gemm/w4-mt64-nt128-kt8",
-      "conditions": {"field": "aligne", "divisible-by": 4}
-    },
-    {
-      "template": "mfma-tile-gemm",
-      "family": "dense",
-      "sig": "abc",
-      "block": [64, 4, 1],
-      "width": 4,
-      "params": {"mt": 128, "nt": 128, "kt": 8},
-      "variant": "mfma-tile-gemm/w4-mt128-nt128-kt8",
-      "conditions": {"field": "aligne", "divisible-by": 4}
+      "params": {"mt": 128, "nt": 128, "kt": 16},
+      "variant": "mfma-tile-gemm/w4-mt128-nt128-kt16-by4",
+      "conditions": {
+        "all": [
+          {"field": "aligne", "divisible-by": 4},
+          {"field": "k", "gt": 256}
+        ]
+      }
     },
     {
       "template": "mfma-tile-gemm",
@@ -179,13 +186,54 @@
       "family": "dense",
       "sig": "abc",
       "block": [64, 4, 1],
-      "width": 2,
+      "width": 4,
+      "params": {"mt": 128, "nt": 64, "kt": 8},
+      "variant": "mfma-tile-gemm/w4-mt128-nt64-kt8",
+      "conditions": {"field": "aligne", "divisible-by": 4}
+    },
+    {
+      "template": "mfma-tile-gemm",
+      "family": "dense",
+      "sig": "abc",
+      "block": [64, 4, 1],
+      "width": 4,
+      "params": {"mt": 128, "nt": 128, "kt": 8},
+      "variant": "mfma-tile-gemm/w4-mt128-nt128-kt8",
+      "conditions": {"field": "aligne", "divisible-by": 4}
+    },
+    {
+      "template": "mfma-tile-gemm",
+      "family": "dense",
+      "sig": "abc",
+      "block": [64, 4, 1],
+      "width": 4,
       "params": {"mt": 64, "nt": 64, "kt": 8},
-      "variant": "mfma-tile-gemm/w2-mt64-nt64-kt8",
+      "variant": "mfma-tile-gemm/w4-mt64-nt64-kt8",
+      "conditions": {"field": "aligne", "divisible-by": 4}
+    },
+    {
+      "template": "mfma-tile-gemm",
+      "family": "dense",
+      "sig": "abc",
+      "block": [64, 4, 1],
+      "width": 4,
+      "params": {"mt": 64, "nt": 128, "kt": 8},
+      "variant": "mfma-tile-gemm/w4-mt64-nt128-kt8",
+      "conditions": {"field": "aligne", "divisible-by": 4}
+    },
+    {
+      "template": "mfma-tile-gemm",
+      "family": "dense",
+      "sig": "abc",
+      "block": [64, 4, 1],
+      "width": 2,
+      "params": {"mt": 176, "nt": 64, "kt": 8},
+      "variant": "mfma-tile-gemm/w2-mt176-nt64-kt8",
       "conditions": {
         "all": [
           {"field": "aligne", "divisible-by": 2},
-          {"not": {"field": "aligne", "divisible-by": 4}}
+          {"not": {"field": "aligne", "divisible-by": 4}},
+          {"field": "m", "gt": 128}
         ]
       }
     },
@@ -197,21 +245,6 @@
       "width": 2,
       "params": {"mt": 128, "nt": 64, "kt": 8},
       "variant": "mfma-tile-gemm/w2-mt128-nt64-kt8",
-      "conditions": {
-        "all": [
-          {"field": "aligne", "divisible-by": 2},
-          {"not": {"field": "aligne", "divisible-by": 4}}
-        ]
-      }
-    },
-    {
-      "template": "mfma-tile-gemm",
-      "family": "dense",
-      "sig": "abc",
-      "block": [64, 4, 1],
-      "width": 2,
-      "params": {"mt": 64, "nt": 128, "kt": 8},
-      "variant": "mfma-tile-gemm/w2-mt64-nt128-kt8",
       "conditions": {
         "all": [
           {"field": "aligne", "divisible-by": 2},
@@ -240,13 +273,12 @@
       "sig": "abc",
       "block": [64, 4, 1],
       "width": 2,
-      "params": {"mt": 176, "nt": 64, "kt": 8},
-      "variant": "mfma-tile-gemm/w2-mt176-nt64-kt8",
+      "params": {"mt": 64, "nt": 64, "kt": 8},
+      "variant": "mfma-tile-gemm/w2-mt64-nt64-kt8",
       "conditions": {
         "all": [
           {"field": "aligne", "divisible-by": 2},
-          {"not": {"field": "aligne", "divisible-by": 4}},
-          {"field": "m", "gt": 128}
+          {"not": {"field": "aligne", "divisible-by": 4}}
         ]
       }
     },
@@ -255,40 +287,15 @@
       "family": "dense",
       "sig": "abc",
       "block": [64, 4, 1],
-      "width": 1,
-      "params": {"mt": 64, "nt": 64, "kt": 8},
-      "variant": "mfma-tile-gemm/mt64-nt64-kt8",
-      "conditions": {"not": {"field": "aligne", "divisible-by": 2}}
-    },
-    {
-      "template": "mfma-tile-gemm",
-      "family": "dense",
-      "sig": "abc",
-      "block": [64, 4, 1],
-      "width": 1,
-      "params": {"mt": 128, "nt": 64, "kt": 8},
-      "variant": "mfma-tile-gemm/mt128-nt64-kt8",
-      "conditions": {"not": {"field": "aligne", "divisible-by": 2}}
-    },
-    {
-      "template": "mfma-tile-gemm",
-      "family": "dense",
-      "sig": "abc",
-      "block": [64, 4, 1],
-      "width": 1,
+      "width": 2,
       "params": {"mt": 64, "nt": 128, "kt": 8},
-      "variant": "mfma-tile-gemm/mt64-nt128-kt8",
-      "conditions": {"not": {"field": "aligne", "divisible-by": 2}}
-    },
-    {
-      "template": "mfma-tile-gemm",
-      "family": "dense",
-      "sig": "abc",
-      "block": [64, 4, 1],
-      "width": 1,
-      "params": {"mt": 128, "nt": 128, "kt": 8},
-      "variant": "mfma-tile-gemm/mt128-nt128-kt8",
-      "conditions": {"not": {"field": "aligne", "divisible-by": 2}}
+      "variant": "mfma-tile-gemm/w2-mt64-nt128-kt8",
+      "conditions": {
+        "all": [
+          {"field": "aligne", "divisible-by": 2},
+          {"not": {"field": "aligne", "divisible-by": 4}}
+        ]
+      }
     },
     {
       "template": "mfma-tile-gemm",
@@ -310,47 +317,40 @@
       "family": "dense",
       "sig": "abc",
       "block": [64, 4, 1],
-      "width": 4,
-      "params": {"mt": 128, "nt": 128, "kt": 16},
-      "variant": "mfma-tile-gemm/w4-mt128-nt128-kt16-by4",
-      "conditions": {
-        "all": [
-          {"field": "aligne", "divisible-by": 4},
-          {"field": "k", "gt": 256}
-        ]
-      }
+      "width": 1,
+      "params": {"mt": 128, "nt": 64, "kt": 8},
+      "variant": "mfma-tile-gemm/mt128-nt64-kt8",
+      "conditions": {"not": {"field": "aligne", "divisible-by": 2}}
     },
     {
       "template": "mfma-tile-gemm",
       "family": "dense",
       "sig": "abc",
-      "block": [64, 8, 1],
-      "width": 4,
-      "params": {"mt": 224, "nt": 64, "kt": 8},
-      "variant": "mfma-tile-gemm/w4-mt224-nt64-kt8-by8",
-      "conditions": {
-        "all": [
-          {"field": "aligne", "divisible-by": 4},
-          {"field": "k", "gt": 256},
-          {"field": "m", "gt": 176}
-        ]
-      }
+      "block": [64, 4, 1],
+      "width": 1,
+      "params": {"mt": 128, "nt": 128, "kt": 8},
+      "variant": "mfma-tile-gemm/mt128-nt128-kt8",
+      "conditions": {"not": {"field": "aligne", "divisible-by": 2}}
     },
     {
       "template": "mfma-tile-gemm",
       "family": "dense",
       "sig": "abc",
-      "block": [64, 8, 1],
-      "width": 4,
-      "params": {"mt": 224, "nt": 64, "kt": 16},
-      "variant": "mfma-tile-gemm/w4-mt224-nt64-kt16-by8",
-      "conditions": {
-        "all": [
-          {"field": "aligne", "divisible-by": 4},
-          {"field": "k", "gt": 256},
-          {"field": "m", "gt": 176}
-        ]
-      }
+      "block": [64, 4, 1],
+      "width": 1,
+      "params": {"mt": 64, "nt": 64, "kt": 8},
+      "variant": "mfma-tile-gemm/mt64-nt64-kt8",
+      "conditions": {"not": {"field": "aligne", "divisible-by": 2}}
+    },
+    {
+      "template": "mfma-tile-gemm",
+      "family": "dense",
+      "sig": "abc",
+      "block": [64, 4, 1],
+      "width": 1,
+      "params": {"mt": 64, "nt": 128, "kt": 8},
+      "variant": "mfma-tile-gemm/mt64-nt128-kt8",
+      "conditions": {"not": {"field": "aligne", "divisible-by": 2}}
     }
   ]
 }
