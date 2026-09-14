@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "kernels": [
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 4, 1],
+      "width": 1,
+      "params": {"bsz": 24},
+      "variant": "bstream-msplit/m4-b24-x64"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [64, 2, 1],
+      "width": 1,
+      "params": {"csz": 24},
+      "variant": "cstream-ksplit/k2-c24-x64"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 8, 1],
+      "width": 2,
+      "params": {"bsz": 8},
+      "variant": "bstream-msplit/w2-m8-b8-x64",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 4, 1],
+      "width": 2,
+      "params": {"bsz": 8},
+      "variant": "bstream-msplit/w2-m4-b8-x64",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 8, 1],
+      "width": 2,
+      "params": {"bsz": 8, "preload-c": true},
+      "variant": "bstream-msplit-preload-c/w2-m8-b8-x64",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 4, 1],
+      "width": 2,
+      "params": {"bsz": 8, "preload-c": true},
+      "variant": "bstream-msplit-preload-c/w2-m4-b8-x64",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [64, 4, 1],
+      "width": 2,
+      "params": {"csz": 8, "preload-c": true},
+      "variant": "cstream-ksplit-preload-c/w2-k4-c8-x64",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [64, 2, 1],
+      "width": 2,
+      "params": {"csz": 8, "preload-c": true},
+      "variant": "cstream-ksplit-preload-c/w2-k2-c8-x64",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 8, 1],
+      "width": 1,
+      "params": {"bsz": 8},
+      "variant": "bstream-msplit/m8-b8-x64"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 4, 1],
+      "width": 1,
+      "params": {"bsz": 8},
+      "variant": "bstream-msplit/m4-b8-x64"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 8, 1],
+      "width": 1,
+      "params": {"bsz": 8, "preload-c": true},
+      "variant": "bstream-msplit-preload-c/m8-b8-x64"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "block": [64, 4, 1],
+      "width": 1,
+      "params": {"bsz": 8, "preload-c": true},
+      "variant": "bstream-msplit-preload-c/m4-b8-x64"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [64, 4, 1],
+      "width": 1,
+      "params": {"csz": 8, "preload-c": true},
+      "variant": "cstream-ksplit-preload-c/k4-c8-x64"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "block": [64, 2, 1],
+      "width": 1,
+      "params": {"csz": 8, "preload-c": true},
+      "variant": "cstream-ksplit-preload-c/k2-c8-x64"
+    }
+  ]
+}
