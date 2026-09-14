@@ -297,7 +297,7 @@ class PTXMatMul(MatMul):
         # Shared memory: both B stages, A, and the mailboxes and barriers
         match tpl:
             case 'dmma-steal-ws':
-                smem = 2*b_tile_bytes + a_bytes + 32 + 13*8
+                smem = 2*b_tile_bytes + a_bytes + 2*16 + 8*8
             case 'dmma-stride-ws':
                 smem = 2*b_tile_bytes + a_bytes + 5*8
 

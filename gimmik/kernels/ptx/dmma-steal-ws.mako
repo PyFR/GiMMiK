@@ -1,7 +1,7 @@
 <%inherit file='base'/>
 
 <%def name="producer_init_setup()">
-    // Producer warp: initial A bulk-copy + B load for ctaid_x's work
+    // Initial A and B
     @!p_prod bra.uni $L_AFTER_INIT_B;
     {
         .reg .b32 n_start0;
@@ -22,7 +22,20 @@
 $L_TMA_INIT_W:
         mbarrier.try_wait.shared::cta.b64 p1, [s_tma_mbar], state, ${mbar_maxwait};
         @!p1 bra.uni $L_TMA_INIT_W;
+        bar.warp.sync 0xffffffff;
+
+        // First lookahead
+        .reg .b32 pipe_addr, pipe_base;
+        add.u32 pipe_phase, pipe_phase, 1;
+        shl.b32 pipe_addr, pipe_phase, 2;
+        mov.u32 pipe_base, s_block_pipe;
+        add.u32 pipe_addr, pipe_addr, pipe_base;
+$L_WAIT_INIT_WORK:
+        mbarrier.try_wait.parity.shared::cta.b64 p1, [s_work_ready_mbar], phase, ${mbar_maxwait};
+        @!p1 bra.uni $L_WAIT_INIT_WORK;
+        ld.shared::cta.s32 block_idx_x, [pipe_addr];
         .reg .b64 _state2;
+        @p_warp_lead mbarrier.arrive.shared::cta.b64 _state2, [s_work_used_mbar];
         @p_warp_lead mbarrier.arrive.shared::cta.b64 _state2, [s_bready_mbar];
     }
 $L_AFTER_INIT_B:
@@ -38,6 +51,15 @@ $L_AFTER_INIT_B:
 $L_WAIT_BRDY:
         mbarrier.try_wait.parity.shared::cta.b64 p1, [s_bready_mbar], phase, ${mbar_maxwait};
         @!p1 bra.uni $L_WAIT_BRDY;
+
+        .reg .b32 pipe_addr, pipe_base;
+        shl.b32 pipe_addr, pipe_phase, 2;
+        mov.u32 pipe_base, s_block_pipe;
+        add.u32 pipe_addr, pipe_addr, pipe_base;
+        ld.shared::cta.s32 block_idx_x, [pipe_addr];
+        setp.lt.s32 p1, block_idx_x, 0;
+        @p1 bra.uni $L_EXIT;
+        mul.lo.u32 n_start_curr, block_idx_x, ${n_per_cta};
     }
 
     // MMA
@@ -64,8 +86,7 @@ $L_WAIT_BRDY:
 % endfor
 
 % if beta_zero:
-        // beta=0: skip shared-staging entirely; compute warps store MMA
-        // outputs straight to global C with N-tail predication.
+        // Direct C stores
         .reg .u64 c_glob_addr;
         ld.param.u64 c_glob_addr, [c_desc];
         cvta.to.global.u64 c_glob_addr, c_glob_addr;
@@ -170,7 +191,7 @@ $L_WAIT_BRDY:
 %   endfor
 %  endfor
 % else:
-        // Wait until producer's prev-iter TMA-store of C has drained.
+        // Wait for the previous C store
         {
             .reg .pred p1;
 $L_WAIT_CSTORE:
@@ -178,8 +199,7 @@ $L_WAIT_CSTORE:
             @!p1 bra.uni $L_WAIT_CSTORE;
         }
 
-        // Vector-store {d_x, d_y} pairs to csmem.  M-tail / N-tail OOB rows
-        // are dropped by the C tensor map.
+        // Stage C for TMA
 %  for mt in range(m_tiles):
 %   for nt in range(nn):
         {
@@ -202,34 +222,15 @@ $L_WAIT_CSTORE:
 
     }
 
-        // Wait for new work and unpack
-        {
-            .reg .pred p1, p_have;
-            .reg .b32 pipe_idx, pipe_phase;
-            .reg .b32 pipe_addr, pipe_ready_mbar, pipe_used_mbar, pipe_base;
-            and.b32 pipe_idx, pipe_seq, 3;
-            shr.u32 pipe_phase, pipe_seq, 2;
-            and.b32 pipe_phase, pipe_phase, 1;
-            shl.b32 pipe_addr, pipe_idx, 2;
-            mov.u32 pipe_base, s_block_pipe;
-            add.u32 pipe_addr, pipe_base, pipe_addr;
-            shl.b32 pipe_ready_mbar, pipe_idx, 3;
-            mov.u32 pipe_base, s_pipe_ready_mbar;
-            add.u32 pipe_ready_mbar, pipe_base, pipe_ready_mbar;
-            shl.b32 pipe_used_mbar, pipe_idx, 3;
-            mov.u32 pipe_base, s_pipe_used_mbar;
-            add.u32 pipe_used_mbar, pipe_base, pipe_used_mbar;
-$L_WAIT_WNEW_C:
-            mbarrier.try_wait.parity.shared::cta.b64 p1, [pipe_ready_mbar], pipe_phase, ${mbar_maxwait};
-            @!p1 bra.uni $L_WAIT_WNEW_C;
+    // Outside the accumulator scope to limit register pressure
+    {
+        .reg .b64 _state;
+        @p_warp_lead mbarrier.arrive.release.cta.shared::cta.b64 _state, [s_bused_mbar];
 
-            ld.shared::cta.s32 block_idx_x, [pipe_addr];
-            setp.ge.s32 p_have, block_idx_x, 0;
-            selp.b32 work, 1, 0, p_have;
+        add.u32 pipe_phase, pipe_phase, 1;
+        and.b32 pipe_phase, pipe_phase, 3;
+    }
 
-            .reg .b64 _state;
-            @p_warp_lead mbarrier.arrive.shared::cta.b64 _state, [pipe_used_mbar];
-        }
 $L_AFTER_COMPUTE:
 </%def>
 
@@ -237,40 +238,28 @@ $L_AFTER_COMPUTE:
     // --- Data Movement Warp
     @!p_prod bra.uni $L_AFTER_DATA;
     {
+% if not beta_zero:
         .reg .b32 n_c_store;
-        mul.lo.u32 n_c_store, block_idx_x, ${n_per_cta};
-
-        // Wait for new work and unpack
+        // Current C is one ring slot behind next B
         {
-            .reg .pred p1, p_have;
-            .reg .b32 pipe_idx, pipe_phase;
-            .reg .b32 pipe_addr, pipe_ready_mbar, pipe_used_mbar;
-            .reg .b32 pipe_base;
-            and.b32 pipe_idx, pipe_seq, 3;
-            shr.u32 pipe_phase, pipe_seq, 2;
-            and.b32 pipe_phase, pipe_phase, 1;
-            shl.b32 pipe_addr, pipe_idx, 2;
+            .reg .b32 prev_pipe, pipe_addr, pipe_base;
+            add.u32 prev_pipe, pipe_phase, 3;
+            and.b32 prev_pipe, prev_pipe, 3;
+            shl.b32 pipe_addr, prev_pipe, 2;
             mov.u32 pipe_base, s_block_pipe;
-            add.u32 pipe_addr, pipe_base, pipe_addr;
-            shl.b32 pipe_ready_mbar, pipe_idx, 3;
-            mov.u32 pipe_base, s_pipe_ready_mbar;
-            add.u32 pipe_ready_mbar, pipe_base, pipe_ready_mbar;
-            shl.b32 pipe_used_mbar, pipe_idx, 3;
-            mov.u32 pipe_base, s_pipe_used_mbar;
-            add.u32 pipe_used_mbar, pipe_base, pipe_used_mbar;
-$L_WAIT_WNEW_D:
-            mbarrier.try_wait.parity.shared::cta.b64 p1, [pipe_ready_mbar], pipe_phase, ${mbar_maxwait};
-            @!p1 bra.uni $L_WAIT_WNEW_D;
-
-            ld.shared::cta.s32 block_idx_x, [pipe_addr];
-            setp.ge.s32 p_have, block_idx_x, 0;
-            selp.b32 work, 1, 0, p_have;
-            .reg .b64 _state;
-            @p_warp_lead mbarrier.arrive.shared::cta.b64 _state, [pipe_used_mbar];
+            add.u32 pipe_addr, pipe_addr, pipe_base;
+            ld.shared::cta.s32 n_c_store, [pipe_addr];
+            mul.lo.u32 n_c_store, n_c_store, ${n_per_cta};
         }
+% endif
 
-        // TMA loads of next B
+        .reg .pred p_no_next;
+        setp.lt.s32 p_no_next, block_idx_x, 0;
+
+        // Load next B
         {
+            @p_no_next bra.uni $L_SKIP_TMA_LOAD_D;
+            .reg .b32 n_start_next;
             mul.lo.u32 n_start_next, block_idx_x, ${n_per_cta};
             .reg .b32 b_next;
             .reg .pred p_ph;
@@ -281,12 +270,12 @@ $L_WAIT_WNEW_D:
             @p_warp_lead mbarrier.expect_tx.relaxed.cta.shared::cta.b64
                 [s_tma_mbar], ${b_tile_bytes};
             @p_warp_lead cp.async.bulk.commit_group;
+$L_SKIP_TMA_LOAD_D:
         }
         bar.warp.sync 0xffffffff;
 
 % if not beta_zero:
-        // TMA reduce+store of C (beta=1 only; beta=0 uses direct global
-        // stores from compute warps, so the producer does no C work).
+        // Store C
         {
             .reg .pred p1;
             .reg .b64 _c_state;
@@ -301,32 +290,47 @@ $L_WAIT_CRDY:
         }
 % endif
 
-        // Wait for next B to be ready, then signal B and C ready
+        // Fetch work while B and C are in flight
         {
-            .reg .b64 b_state, _bready_state, _c_state;
             .reg .pred p1;
+            .reg .b32 pipe_addr, pipe_base, next_work_phase;
+            @p_no_next bra.uni $L_SKIP_WNEW_D;
+            xor.b32 next_work_phase, phase, 1;
+$L_WAIT_WNEW_D:
+            mbarrier.try_wait.parity.shared::cta.b64 p1, [s_work_ready_mbar], next_work_phase, ${mbar_maxwait};
+            @!p1 bra.uni $L_WAIT_WNEW_D;
+            add.u32 pipe_phase, pipe_phase, 1;
+            and.b32 pipe_phase, pipe_phase, 3;
+            shl.b32 pipe_addr, pipe_phase, 2;
+            mov.u32 pipe_base, s_block_pipe;
+            add.u32 pipe_addr, pipe_addr, pipe_base;
+            ld.shared::cta.s32 block_idx_x, [pipe_addr];
+            .reg .b64 _state;
+            @p_warp_lead mbarrier.arrive.shared::cta.b64 _state, [s_work_used_mbar];
+$L_SKIP_WNEW_D:
+        }
+
+        // Publish next B
+        {
+            .reg .b64 b_state, _bready_state;
+            .reg .pred p1;
+            @p_no_next bra.uni $L_TMA_DONE;
             mbarrier.arrive.shared::cta.b64 b_state, [s_tma_mbar];
 $L_WAIT_TMA:
             mbarrier.try_wait.shared::cta.b64 p1, [s_tma_mbar], b_state, ${mbar_maxwait};
             @!p1 bra.uni $L_WAIT_TMA;
+$L_TMA_DONE:
+            bar.warp.sync 0xffffffff;
+
+            // Wait before reusing B
+$L_WAIT_BUSED:
+            mbarrier.try_wait.parity.shared::cta.b64 p1, [s_bused_mbar], phase, ${mbar_maxwait};
+            @!p1 bra.uni $L_WAIT_BUSED;
 
             @p_warp_lead mbarrier.arrive.shared::cta.b64 _bready_state, [s_bready_mbar];
+            @p_no_next bra.uni $L_EXIT;
         }
 
-        // Keep the producer at most one B tile ahead of compute.
-        {
-            .reg .pred p1;
-            .reg .b32 pipe_idx, pipe_phase, pipe_used_mbar, pipe_base;
-            and.b32 pipe_idx, pipe_seq, 3;
-            shr.u32 pipe_phase, pipe_seq, 2;
-            and.b32 pipe_phase, pipe_phase, 1;
-            shl.b32 pipe_used_mbar, pipe_idx, 3;
-            mov.u32 pipe_base, s_pipe_used_mbar;
-            add.u32 pipe_used_mbar, pipe_base, pipe_used_mbar;
-$L_WAIT_PIPE_USED_D:
-            mbarrier.try_wait.parity.shared::cta.b64 p1, [pipe_used_mbar], pipe_phase, ${mbar_maxwait};
-            @!p1 bra.uni $L_WAIT_PIPE_USED_D;
-        }
     }
 $L_AFTER_DATA:
 </%def>
@@ -335,33 +339,9 @@ $L_AFTER_DATA:
     // --- Controller Warp
     @!p_steal bra.uni $L_AFTER_CTRL;
     {
-        .reg .pred p1, p2, p_canc;
+        .reg .pred p1, p_canc;
         .reg .b64 _state;
         .reg .b128 resp;
-        .reg .b32 pipe_idx, pipe_phase;
-        .reg .b32 pipe_addr, pipe_ready_mbar, pipe_used_mbar, pipe_base;
-        and.b32 pipe_idx, pipe_seq, 3;
-        shr.u32 pipe_phase, pipe_seq, 2;
-        and.b32 pipe_phase, pipe_phase, 1;
-        shl.b32 pipe_addr, pipe_idx, 2;
-        mov.u32 pipe_base, s_block_pipe;
-        add.u32 pipe_addr, pipe_base, pipe_addr;
-        shl.b32 pipe_ready_mbar, pipe_idx, 3;
-        mov.u32 pipe_base, s_pipe_ready_mbar;
-        add.u32 pipe_ready_mbar, pipe_base, pipe_ready_mbar;
-        shl.b32 pipe_used_mbar, pipe_idx, 3;
-        mov.u32 pipe_base, s_pipe_used_mbar;
-        add.u32 pipe_used_mbar, pipe_base, pipe_used_mbar;
-
-        // A slot is reusable only after every consumer has released it.
-        setp.ge.u32 p2, pipe_seq, 4;
-        @!p2 bra.uni $L_PIPE_FREE;
-        .reg .b32 pipe_used_phase;
-        xor.b32 pipe_used_phase, pipe_phase, 1;
-$L_WAIT_WUSED:
-        mbarrier.try_wait.parity.shared::cta.b64 p1, [pipe_used_mbar], pipe_used_phase, ${mbar_maxwait};
-        @!p1 bra.uni $L_WAIT_WUSED;
-$L_PIPE_FREE:
 
         @p_warp_lead fence.proxy.async.shared::cta;
         @p_warp_lead clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.b128
@@ -373,16 +353,24 @@ $L_WAIT_STEAL:
         mbarrier.try_wait.parity.shared::cta.b64 p1, [s_steal_mbar], phase, ${mbar_maxwait};
         @!p1 bra.uni $L_WAIT_STEAL;
 
-        // Query if there's new work
         ld.shared::cta.b128 resp, [s_wid];
         clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 p_canc, resp;
         @p_canc clusterlaunchcontrol.query_cancel.get_first_ctaid::x.b32.b128 block_idx_x, resp;
         @!p_canc mov.u32 block_idx_x, 0xffffffff;
-        selp.b32 work, 1, 0, p_canc;
 
-        // Publish this slot.
+        .reg .b32 pipe_addr, pipe_base;
+        add.u32 pipe_phase, pipe_phase, 1;
+        and.b32 pipe_phase, pipe_phase, 3;
+        shl.b32 pipe_addr, pipe_phase, 2;
+        mov.u32 pipe_base, s_block_pipe;
+        add.u32 pipe_addr, pipe_addr, pipe_base;
         @p_warp_lead st.shared::cta.u32 [pipe_addr], block_idx_x;
-        @p_warp_lead mbarrier.arrive.shared::cta.b64 _state, [pipe_ready_mbar];
+        @p_warp_lead mbarrier.arrive.shared::cta.b64 _state, [s_work_ready_mbar];
+
+$L_WAIT_WORK_USED:
+        mbarrier.try_wait.parity.shared::cta.b64 p1, [s_work_used_mbar], phase, ${mbar_maxwait};
+        @!p1 bra.uni $L_WAIT_WORK_USED;
+        @!p_canc bra.uni $L_EXIT;
     }
 $L_AFTER_CTRL:
 </%def>
@@ -405,20 +393,19 @@ $L_AFTER_CTRL:
     .shared .align 16 .b32 s_block_pipe[4];
     .shared .align 8 .b64 s_tma_mbar;
     .shared .align 8 .b64 s_bready_mbar;
+    .shared .align 8 .b64 s_bused_mbar;
     .shared .align 8 .b64 s_cready_mbar;
     .shared .align 8 .b64 s_cstored_mbar;
     .shared .align 8 .b64 s_steal_mbar;
-    .shared .align 8 .b64 s_pipe_ready_mbar[4];
-    .shared .align 8 .b64 s_pipe_used_mbar[4];
-    .reg .b32 tid, warp, lane, phase, ctaid_x;
+    .shared .align 8 .b64 s_work_ready_mbar;
+    .shared .align 8 .b64 s_work_used_mbar;
+    .reg .b32 tid, warp, lane, phase, pipe_phase, ctaid_x;
     .reg .b32 base_brow, base_bcol, base_crow, base_ccol;
-    .reg .b32 work, block_idx_x, n_start_curr, n_start_next;
-    .reg .b32 pipe_seq;
+    .reg .b32 block_idx_x, n_start_curr;
     .reg .u64 bdesc_addr, cdesc_addr;
     .reg .b32 a_smem, b1_smem, b2_smem, c_smem;
     .reg .pred p_compute, p_prod, p_steal;
     .reg .pred p_warp_lead;
-    .reg .pred p_done;
     .reg .pred p_tid0;
 
     mov.u32 tid, %tid.x;
@@ -447,21 +434,20 @@ $L_AFTER_CTRL:
         elect.sync _elect_lane|p_warp_lead, 0xffffffff;
     }
 
-    // mbarrier init (tid 0 only); pre-arrive csmem_free so compute iter 0
-    // can write csmem immediately.
+    // Initialise barriers; C is initially free
     {
         .reg .pred p_init;
         setp.eq.u32 p_init, tid, 0;
         .reg .b64 _state;
+        @p_init st.shared::cta.u32 [s_block_pipe], ctaid_x;
         @p_init mbarrier.init.shared::cta.b64 [s_tma_mbar], 32;
         @p_init mbarrier.init.shared::cta.b64 [s_bready_mbar], 1;
+        @p_init mbarrier.init.shared::cta.b64 [s_bused_mbar], ${n_comp_warps};
         @p_init mbarrier.init.shared::cta.b64 [s_cready_mbar], 1;
         @p_init mbarrier.init.shared::cta.b64 [s_cstored_mbar], 1;
         @p_init mbarrier.init.shared::cta.b64 [s_steal_mbar], 1;
-% for pi in range(4):
-        @p_init mbarrier.init.shared::cta.b64 [s_pipe_ready_mbar + ${8 * pi}], 1;
-        @p_init mbarrier.init.shared::cta.b64 [s_pipe_used_mbar + ${8 * pi}], ${n_comp_warps + 1};
-% endfor
+        @p_init mbarrier.init.shared::cta.b64 [s_work_ready_mbar], 1;
+        @p_init mbarrier.init.shared::cta.b64 [s_work_used_mbar], 1;
         @p_init mbarrier.arrive.shared::cta.b64 _state, [s_cstored_mbar];
         @p_init fence.proxy.async.shared::cta;
     }
@@ -478,25 +464,19 @@ $L_AFTER_CTRL:
         add.u32 base_ccol, t, w_n_base;
     }
 
+    mov.u32 block_idx_x, ctaid_x;
+    mov.u32 phase, 0;
+    mov.u32 pipe_phase, 0;
+
     ${producer_init_setup()}
 
-    mov.u32 block_idx_x, ctaid_x;
-    mov.u32 work, 1;
-    mov.u32 phase, 0;
-    mov.u32 pipe_seq, 0;
-
 $L_LOOP:
-    setp.eq.u32 p_done, work, 0;
-    @p_done bra.uni $L_EXIT;
-
-    mul.lo.u32 n_start_curr, block_idx_x, ${n_per_cta};
     ${compute_warp_body()}
 
     ${data_warp_body()}
 
     ${ctrl_warp_body()}
 
-    add.u32 pipe_seq, pipe_seq, 1;
     xor.b32 phase, phase, 1;
     bra.uni $L_LOOP;
 
