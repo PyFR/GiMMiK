@@ -18,12 +18,10 @@
         bar.warp.sync 0xffffffff;
         .reg .b64 state;
         .reg .pred p1;
-        @!p_warp_lead bra $L_TMA_INIT_DONE;
         mbarrier.arrive.shared::cta.b64 state, [s_tma_mbar];
 $L_TMA_INIT_W:
         mbarrier.try_wait.shared::cta.b64 p1, [s_tma_mbar], state, ${mbar_maxwait};
         @!p1 bra.uni $L_TMA_INIT_W;
-$L_TMA_INIT_DONE:
         bar.warp.sync 0xffffffff;
 
         // First lookahead
@@ -317,7 +315,6 @@ $L_SKIP_WNEW_D:
             .reg .b64 b_state, _bready_state;
             .reg .pred p1;
             @p_no_next bra.uni $L_TMA_DONE;
-            @!p_warp_lead bra $L_TMA_DONE;
             mbarrier.arrive.shared::cta.b64 b_state, [s_tma_mbar];
 $L_WAIT_TMA:
             mbarrier.try_wait.shared::cta.b64 p1, [s_tma_mbar], b_state, ${mbar_maxwait};
@@ -443,7 +440,7 @@ $L_AFTER_CTRL:
         setp.eq.u32 p_init, tid, 0;
         .reg .b64 _state;
         @p_init st.shared::cta.u32 [s_block_pipe], ctaid_x;
-        @p_init mbarrier.init.shared::cta.b64 [s_tma_mbar], 1;
+        @p_init mbarrier.init.shared::cta.b64 [s_tma_mbar], 32;
         @p_init mbarrier.init.shared::cta.b64 [s_bready_mbar], 1;
         @p_init mbarrier.init.shared::cta.b64 [s_bused_mbar], ${n_comp_warps};
         @p_init mbarrier.init.shared::cta.b64 [s_cready_mbar], 1;
