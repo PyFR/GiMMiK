@@ -17,7 +17,7 @@ class PTXMatMul(MatMul):
 
     # Map explicitly supported CC to minimum PTX version
     PTX_SM = {(8, 0): (7, 0), (9, 0): (8, 6), (10, 0): (8, 7), (10, 3): (8, 7),
-              (12, 0): (8, 7), (12, 1): (8, 7)}
+              (12, 0): (8, 7), (12, 1): (8, 8)}
 
     FZERO = {'float': '0f00000000', 'double': '0d0000000000000000'}
     PFTYPE = {'float': 'f32', 'double': 'f64'}
