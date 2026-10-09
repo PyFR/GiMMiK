@@ -28,11 +28,11 @@ class PTXMatMul(MatMul):
         return self._unrolled_viable() and cc >= (7, 0)
 
     def _dense_viable(self, cc):
-        # True when the target and operator admit the dense DMMA kernels
+        # True when the target and operator admit dense GEMM kernels
         cc_appropriate = cc in self.PTX_SM and cc >= (9, 0)
 
         # These templates implement a beta of zero and of one only
-        return (self.A.dtype == np.float64 and cc_appropriate and
+        return (self.A.dtype in (np.float32, np.float64) and cc_appropriate and
                 self.beta in (0, 1) and self.m <= 128 and self.k <= 128)
 
     def _kernel_generators(self, dtype, dsize, *, sigs,
@@ -55,6 +55,8 @@ class PTXMatMul(MatMul):
 
         cfgs = config['kernels']
         cfg = [k for k in cfgs if self._usable_config(k, dtype, cc)]
+        if dtype == 'float' and self._sparse_viable(cc):
+            cfg.sort(key=lambda k: k['family'] == 'dense-float')
 
         for k in cfg:
             prepared = self._get_render_args(k, dtype, dsize, target_cc, ptx,
@@ -91,6 +93,9 @@ class PTXMatMul(MatMul):
             case 'sparse':
                 cfg = self._sparse_args(tpl, params, block, dtype, dsize,
                                         base_args, base_meta)
+            case 'dense-float':
+                cfg = self._smma_args(kernel_cfg, params, smem_max, base_args,
+                                      base_meta)
             case 'dense':
                 cfg = self._dense_args(kernel_cfg, params, cc, dtype, dsize,
                                        base_args, base_meta)
@@ -135,6 +140,81 @@ class PTXMatMul(MatMul):
         # Tensor map for the C panel a descriptor kernel stages out
         return tensormap_spec('c', self.NPTYPE[dtype], (n_per_cta, m_pad),
                               (self.n, self.m), (self.ldc*dsize,))
+
+    def _smma_args(self, cfg, params, smem_max, args, meta):
+        mt, nt, kt = (params[x] for x in ('mt', 'nt', 'kt'))
+        threads = cfg['block'][0]
+        if cfg['template'].startswith('smma-tt') and (mt % 4 or kt % 4):
+            return None
+        groups = -(-self.m // mt)
+        compact = params.get('compact-groups', False)
+        if compact:
+            if threads < groups:
+                return None
+            workers = 1 << (min(32, threads // groups).bit_length() - 1)
+            threads = groups*workers
+        elif threads % groups:
+            groups = 1 << (groups - 1).bit_length()
+        inline = params.get('inline-lds', True)
+        width = cfg['width']
+        if width not in (2, 4) or nt % width:
+            return None
+        if params.get('ffma2', False) and args['cc'][0] < 10:
+            return None
+        if threads % groups or self.aligne is None or self.aligne % width:
+            return None
+        if self.n is None:
+            if inline:
+                return None
+        elif self.ldb % 4 or self.ldc % width:
+            return None
+        workers = threads // groups
+        panel = workers*nt
+        if panel > 256:
+            return None
+        mpad = groups*mt
+        kpad = -(-self.k // kt)*kt
+        a = np.zeros((self.k, mpad), dtype=np.float32)
+        a[:self.k, :self.m] = self.A.T
+        a_words = np.pad(a.ravel(), (0, -a.size % 4))
+        abytes = a_words.nbytes
+        bbytes = panel*kt*4
+        shared = -(-abytes // 128)*128 + 2*bbytes + 8
+        if shared > min(smem_max or 48*1024, 48*1024):
+            return None
+        div = panel*params['iters']
+        grid = ({'div': div} if self.n is None else -(-self.n // div))
+        args |= {'mt': mt, 'nt': nt, 'kt': kt, 'groups': groups,
+                 'workers': workers, 'mpad': mpad, 'kpad': kpad,
+                 'panel': panel, 'abytes': abytes, 'bbytes': bbytes,
+                 'a_u32': [f'0x{x:08x}' for x in a_words.view(np.uint32)],
+                 'k_used': [bool(np.any(self.A[:, i])) for i in range(self.k)],
+                 'inline_lds': inline,
+                 'ffma2': params.get('ffma2', False),
+                 'skip_zero': params.get('skip-zero', False),
+                 'prefetch_c': params.get('prefetch-c', False),
+                 'preload_c': params.get('preload-c', False),
+                 'zero_chunks': [sum(1 << g for g in range(groups)
+                                     if not np.any(a[i:i+4, g*mt:(g+1)*mt]))
+                                 for i in range(0, kpad, 4)],
+                 'zero_groups': [[g for g in range(groups)
+                                  if not np.any(a[i:i+kt, g*mt:(g+1)*mt])]
+                                 for i in range(0, kpad, kt)]}
+        meta |= {'grid': (grid, 1, 1), 'block': (threads, 1, 1), 'shared': shared,
+                 'sig': SIG_BDESC_C, 'nbaked': args['inline_lds'],
+                 'operands': {'b_desc': tensormap_spec(
+                     'b', np.float32, (panel, kt), (self.n, self.k),
+                     (4*self.ldb if self.ldb is not None else None,))}}
+        return cfg['template'], args, meta
+
+    def operands(self, meta, n=None, ldb=None, ldc=None):
+        operands = super().operands(meta, n, ldb, ldc)
+        if meta['tplname'].startswith('smma-') and 'n' in meta['args']:
+            spec = operands['b_desc']
+            operands = operands | {'b_desc': spec | {
+                'global_dim': (n or self.n, self.k),
+                'global_stride': (4*(ldb or self.ldb),)}}
+        return operands
 
     def _dense_args(self, kernel_cfg, params, cc, dtype, dsize, args, meta):
         tpl, tile = kernel_cfg['template'], kernel_cfg['tile']
@@ -358,9 +438,14 @@ class PTXMatMul(MatMul):
         if family == 'sparse':
             if not self._sparse_viable(cc):
                 return False
-        elif family in {'dense', 'dense-ws'}:
+        elif family in {'dense', 'dense-ws', 'dense-float'}:
             dense = self._dense_viable(cc)
-            if dtype != 'double' or self.n is None or not dense:
+            if (dtype != ('float' if family == 'dense-float' else 'double')
+                    or not dense):
+                return False
+            if self.n is None and (family != 'dense-float' or
+                                   kernel_cfg.get('params', {}).get(
+                                       'inline-lds', True)):
                 return False
 
         condition = kernel_cfg.get('conditions')
