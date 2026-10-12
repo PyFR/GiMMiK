@@ -10,76 +10,8 @@
   ],
   "kernels": [
     {
-      "template": "smma-dotp",
-      "family": "dense-float",
-      "block": [
-        64,
-        1,
-        1
-      ],
-      "width": 4,
-      "params": {
-        "mt": 2,
-        "nt": 8,
-        "kt": 8,
-        "iters": 4,
-        "inline-lds": true
-      },
-      "variant": "smma-dotp/m2-n8-k8-b64-i4/inline-lds",
-      "conditions": {
-        "all": [
-          {
-            "field": "m",
-            "lte": 8
-          },
-          {
-            "field": "k",
-            "lte": 8
-          },
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
-      }
-    },
-    {
-      "template": "smma-dotp",
-      "family": "dense-float",
-      "block": [
-        64,
-        1,
-        1
-      ],
-      "width": 4,
-      "params": {
-        "mt": 2,
-        "nt": 8,
-        "kt": 8,
-        "iters": 4,
-        "inline-lds": false
-      },
-      "variant": "smma-dotp/m2-n8-k8-b64-i4/runtime-lds",
-      "conditions": {
-        "all": [
-          {
-            "field": "m",
-            "lte": 8
-          },
-          {
-            "field": "k",
-            "lte": 8
-          },
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
-      }
-    },
-    {
-      "template": "smma-tt",
-      "family": "dense-float",
+      "template": "smma-stride-v4",
+      "family": "dense",
       "block": [
         64,
         1,
@@ -90,48 +22,17 @@
         "mt": 8,
         "nt": 4,
         "kt": 16,
-        "iters": 4,
-        "inline-lds": true
+        "iters": 4
       },
-      "variant": "smma-tt/m8-n4-k16-b64-i4/inline-lds",
+      "variant": "smma-stride/m8-n4-k16-b64-i4",
       "conditions": {
-        "all": [
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
+        "field": "density",
+        "gt": 0.15
       }
     },
     {
-      "template": "smma-tt",
-      "family": "dense-float",
-      "block": [
-        64,
-        1,
-        1
-      ],
-      "width": 4,
-      "params": {
-        "mt": 8,
-        "nt": 4,
-        "kt": 16,
-        "iters": 4,
-        "inline-lds": false
-      },
-      "variant": "smma-tt/m8-n4-k16-b64-i4/runtime-lds",
-      "conditions": {
-        "all": [
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
-      }
-    },
-    {
-      "template": "smma-tt",
-      "family": "dense-float",
+      "template": "smma-stride-v4",
+      "family": "dense",
       "block": [
         128,
         1,
@@ -142,48 +43,17 @@
         "mt": 8,
         "nt": 4,
         "kt": 32,
-        "iters": 8,
-        "inline-lds": true
+        "iters": 8
       },
-      "variant": "smma-tt/m8-n4-k32-b128-i8/inline-lds",
+      "variant": "smma-stride/m8-n4-k32-b128-i8",
       "conditions": {
-        "all": [
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
+        "field": "density",
+        "gt": 0.15
       }
     },
     {
-      "template": "smma-tt",
-      "family": "dense-float",
-      "block": [
-        128,
-        1,
-        1
-      ],
-      "width": 4,
-      "params": {
-        "mt": 8,
-        "nt": 4,
-        "kt": 32,
-        "iters": 8,
-        "inline-lds": false
-      },
-      "variant": "smma-tt/m8-n4-k32-b128-i8/runtime-lds",
-      "conditions": {
-        "all": [
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
-      }
-    },
-    {
-      "template": "smma-tt",
-      "family": "dense-float",
+      "template": "smma-stride-v4",
+      "family": "dense",
       "block": [
         160,
         1,
@@ -194,40 +64,17 @@
         "mt": 8,
         "nt": 4,
         "kt": 16,
-        "iters": 4,
-        "inline-lds": true
+        "iters": 4
       },
-      "variant": "smma-tt/m8-n4-k16-b160-i4/inline-lds",
+      "variant": "smma-stride/m8-n4-k16-b160-i4",
       "conditions": {
         "field": "density",
         "gt": 0.15
       }
     },
     {
-      "template": "smma-tt",
-      "family": "dense-float",
-      "block": [
-        160,
-        1,
-        1
-      ],
-      "width": 4,
-      "params": {
-        "mt": 8,
-        "nt": 4,
-        "kt": 16,
-        "iters": 4,
-        "inline-lds": false
-      },
-      "variant": "smma-tt/m8-n4-k16-b160-i4/runtime-lds",
-      "conditions": {
-        "field": "density",
-        "gt": 0.15
-      }
-    },
-    {
-      "template": "smma-tt",
-      "family": "dense-float",
+      "template": "smma-stride-v2",
+      "family": "dense",
       "block": [
         128,
         1,
@@ -238,43 +85,12 @@
         "mt": 8,
         "nt": 4,
         "kt": 32,
-        "iters": 8,
-        "inline-lds": true
+        "iters": 8
       },
-      "variant": "smma-tt-v2/m8-n4-k32-b128-i8/inline-lds",
+      "variant": "smma-stride-v2/m8-n4-k32-b128-i8",
       "conditions": {
-        "all": [
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
-      }
-    },
-    {
-      "template": "smma-tt",
-      "family": "dense-float",
-      "block": [
-        128,
-        1,
-        1
-      ],
-      "width": 2,
-      "params": {
-        "mt": 8,
-        "nt": 4,
-        "kt": 32,
-        "iters": 8,
-        "inline-lds": false
-      },
-      "variant": "smma-tt-v2/m8-n4-k32-b128-i8/runtime-lds",
-      "conditions": {
-        "all": [
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
+        "field": "density",
+        "gt": 0.15
       }
     },
     {
