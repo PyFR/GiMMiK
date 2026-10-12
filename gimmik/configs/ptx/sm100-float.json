@@ -10,57 +10,25 @@
   ],
   "kernels": [
     {
-      "template": "smma-stride-v4",
+      "template": "smma-stride-v2",
       "family": "dense",
       "block": [
         256,
         1,
         1
       ],
-      "width": 4,
+      "width": 2,
       "params": {
         "mt": 4,
         "nt": 4,
         "kt": 32,
-        "iters": 8,
-        "ffma2": true,
-        "preload-c": true
-      },
-      "variant": "smma-stride-ffma2-preload/m4-n4-k32-b256-i8",
-      "conditions": {
-        "all": [
-          {
-            "field": "beta",
-            "eq": 1
-          },
-          {
-            "field": "density",
-            "gt": 0.15
-          }
-        ]
-      }
-    },
-    {
-      "template": "smma-stride-v4",
-      "family": "dense",
-      "block": [
-        64,
-        1,
-        1
-      ],
-      "width": 4,
-      "params": {
-        "mt": 8,
-        "nt": 4,
-        "kt": 16,
         "iters": 4,
+        "prefetch-c": false,
+        "preload-c": false,
         "ffma2": true
       },
-      "variant": "smma-stride-ffma2/m8-n4-k16-b64-i4",
-      "conditions": {
-        "field": "density",
-        "gt": 0.15
-      }
+      "conditions": null,
+      "variant": "smma-stride-v2/m4-n4-k32-b256-i4-plain-ffma21"
     },
     {
       "template": "smma-stride-v4",
@@ -75,36 +43,37 @@
         "mt": 8,
         "nt": 4,
         "kt": 32,
-        "iters": 8,
+        "iters": 4,
+        "prefetch-c": false,
+        "preload-c": true,
         "ffma2": true
       },
-      "variant": "smma-stride-ffma2/m8-n4-k32-b128-i8",
       "conditions": {
-        "field": "density",
-        "gt": 0.15
-      }
+        "field": "beta",
+        "eq": 1
+      },
+      "variant": "smma-stride-v4/m8-n4-k32-b128-i4-preload-ffma21"
     },
     {
-      "template": "smma-stride-v4",
+      "template": "smma-stride-v2",
       "family": "dense",
       "block": [
-        160,
+        256,
         1,
         1
       ],
-      "width": 4,
+      "width": 2,
       "params": {
         "mt": 8,
         "nt": 4,
-        "kt": 16,
+        "kt": 32,
         "iters": 4,
+        "prefetch-c": false,
+        "preload-c": false,
         "ffma2": true
       },
-      "variant": "smma-stride-ffma2/m8-n4-k16-b160-i4",
-      "conditions": {
-        "field": "density",
-        "gt": 0.15
-      }
+      "conditions": null,
+      "variant": "smma-stride-v2/m8-n4-k32-b256-i4-plain-ffma21"
     },
     {
       "template": "smma-stride-v2",
@@ -120,13 +89,102 @@
         "nt": 4,
         "kt": 16,
         "iters": 4,
+        "prefetch-c": false,
+        "preload-c": false,
         "ffma2": true
       },
-      "variant": "smma-stride-ffma2-v2/m8-n4-k16-b160-i4",
+      "conditions": null,
+      "variant": "smma-stride-v2/m8-n4-k16-b160-i4-plain-ffma21"
+    },
+    {
+      "template": "smma-stride-v4",
+      "family": "dense",
+      "block": [
+        256,
+        1,
+        1
+      ],
+      "width": 4,
+      "params": {
+        "mt": 4,
+        "nt": 4,
+        "kt": 32,
+        "iters": 4,
+        "prefetch-c": false,
+        "preload-c": true,
+        "ffma2": true
+      },
       "conditions": {
-        "field": "density",
-        "gt": 0.15
-      }
+        "field": "beta",
+        "eq": 1
+      },
+      "variant": "smma-stride-v4/m4-n4-k32-b256-i4-preload-ffma21"
+    },
+    {
+      "template": "smma-stride-v4",
+      "family": "dense",
+      "block": [
+        160,
+        1,
+        1
+      ],
+      "width": 4,
+      "params": {
+        "mt": 8,
+        "nt": 4,
+        "kt": 32,
+        "iters": 8,
+        "prefetch-c": false,
+        "preload-c": false,
+        "ffma2": true
+      },
+      "conditions": null,
+      "variant": "smma-stride-v4/m8-n4-k32-b160-i8-plain-ffma21"
+    },
+    {
+      "template": "smma-stride-v2",
+      "family": "dense",
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 2,
+      "params": {
+        "mt": 8,
+        "nt": 4,
+        "kt": 32,
+        "iters": 4,
+        "prefetch-c": false,
+        "preload-c": false,
+        "ffma2": true
+      },
+      "conditions": null,
+      "variant": "smma-stride-v2/m8-n4-k32-b128-i4-plain-ffma21"
+    },
+    {
+      "template": "smma-stride-v4",
+      "family": "dense",
+      "block": [
+        128,
+        1,
+        1
+      ],
+      "width": 4,
+      "params": {
+        "mt": 4,
+        "nt": 4,
+        "kt": 32,
+        "iters": 4,
+        "prefetch-c": false,
+        "preload-c": true,
+        "ffma2": true
+      },
+      "conditions": {
+        "field": "beta",
+        "eq": 1
+      },
+      "variant": "smma-stride-v4/m4-n4-k32-b128-i4-preload-ffma21"
     },
     {
       "template": "cstream-ksplit",
