@@ -28,7 +28,7 @@
         "ffma2": true
       },
       "conditions": null,
-      "variant": "smma-stride-v2/m4-n4-k32-b256-i4-plain-ffma21"
+      "variant": "smma-stride-v2/m4-n4-k32-b256-i4"
     },
     {
       "template": "smma-stride-v4",
@@ -52,7 +52,7 @@
         "field": "beta",
         "eq": 1
       },
-      "variant": "smma-stride-v4/m8-n4-k32-b128-i4-preload-ffma21"
+      "variant": "smma-stride-v4/m8-n4-k32-b128-i4-preload"
     },
     {
       "template": "smma-stride-v2",
@@ -73,7 +73,7 @@
         "ffma2": true
       },
       "conditions": null,
-      "variant": "smma-stride-v2/m8-n4-k32-b256-i4-plain-ffma21"
+      "variant": "smma-stride-v2/m8-n4-k32-b256-i4"
     },
     {
       "template": "smma-stride-v2",
@@ -94,7 +94,7 @@
         "ffma2": true
       },
       "conditions": null,
-      "variant": "smma-stride-v2/m8-n4-k16-b160-i4-plain-ffma21"
+      "variant": "smma-stride-v2/m8-n4-k16-b160-i4"
     },
     {
       "template": "smma-stride-v4",
@@ -118,7 +118,7 @@
         "field": "beta",
         "eq": 1
       },
-      "variant": "smma-stride-v4/m4-n4-k32-b256-i4-preload-ffma21"
+      "variant": "smma-stride-v4/m4-n4-k32-b256-i4-preload"
     },
     {
       "template": "smma-stride-v4",
@@ -139,7 +139,7 @@
         "ffma2": true
       },
       "conditions": null,
-      "variant": "smma-stride-v4/m8-n4-k32-b160-i8-plain-ffma21"
+      "variant": "smma-stride-v4/m8-n4-k32-b160-i8"
     },
     {
       "template": "smma-stride-v2",
@@ -160,7 +160,7 @@
         "ffma2": true
       },
       "conditions": null,
-      "variant": "smma-stride-v2/m8-n4-k32-b128-i4-plain-ffma21"
+      "variant": "smma-stride-v2/m8-n4-k32-b128-i4"
     },
     {
       "template": "smma-stride-v4",
@@ -184,7 +184,7 @@
         "field": "beta",
         "eq": 1
       },
-      "variant": "smma-stride-v4/m4-n4-k32-b128-i4-preload-ffma21"
+      "variant": "smma-stride-v4/m4-n4-k32-b128-i4-preload"
     },
     {
       "template": "cstream-ksplit",
