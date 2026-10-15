@@ -1,0 +1,158 @@
+{
+  "schema": 1,
+  "max-nnz": 16384,
+  "max-nnz-per-row": 48,
+  "kernels": [
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [256, 1, 1],
+      "width": 1,
+      "params": {"w": 32, "pad": 0},
+      "variant": "dense/w32-s8-p0"
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [256, 1, 1],
+      "width": 1,
+      "params": {"w": 32, "pad": 8},
+      "variant": "dense/w32-s8-p8"
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [512, 1, 1],
+      "width": 1,
+      "params": {"w": 32, "pad": 0},
+      "variant": "dense/w32-s16-p0"
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [512, 1, 1],
+      "width": 1,
+      "params": {"w": 32, "pad": 8},
+      "variant": "dense/w32-s16-p8"
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [256, 1, 1],
+      "width": 1,
+      "params": {"w": 64, "pad": 8},
+      "variant": "dense/w64-s8-p8"
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [512, 1, 1],
+      "width": 1,
+      "params": {"w": 64, "pad": 8},
+      "variant": "dense/w64-s16-p8"
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [1024, 1, 1],
+      "width": 1,
+      "params": {"w": 64, "pad": 8},
+      "variant": "dense/w64-s32-p8"
+    },
+    {
+      "template": "dense",
+      "family": "dense",
+      "sig": "abc",
+      "threadgroup": [256, 1, 1],
+      "width": 1,
+      "params": {"w": 128, "pad": 8},
+      "variant": "dense/w128-s8-p8"
+    },
+    {
+      "template": "cstream",
+      "family": "sparse",
+      "threadgroup": [128, 1, 1],
+      "width": 1,
+      "variant": "cstream/x128"
+    },
+    {
+      "template": "bstream",
+      "family": "sparse",
+      "threadgroup": [128, 1, 1],
+      "width": 1,
+      "variant": "bstream/x128"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "threadgroup": [32, 4, 1],
+      "width": 1,
+      "params": {"bsz": 16},
+      "variant": "bstream-msplit/m4-b16-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "threadgroup": [32, 4, 1],
+      "width": 1,
+      "params": {"bsz": 20},
+      "variant": "bstream-msplit/m4-b20-x32"
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "threadgroup": [64, 4, 1],
+      "width": 1,
+      "params": {"bsz": 24},
+      "variant": "bstream-msplit/m4-b24-x64"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "threadgroup": [32, 2, 1],
+      "width": 1,
+      "params": {"csz": 20},
+      "variant": "cstream-ksplit/k2-c20-x32"
+    },
+    {
+      "template": "cstream-ksplit",
+      "family": "sparse",
+      "threadgroup": [128, 2, 1],
+      "width": 1,
+      "params": {"csz": 12},
+      "variant": "cstream-ksplit/k2-c12-x128"
+    },
+    {
+      "template": "cstream",
+      "family": "sparse",
+      "threadgroup": [128, 1, 1],
+      "width": 2,
+      "variant": "cstream/w2-x128",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    },
+    {
+      "template": "bstream",
+      "family": "sparse",
+      "threadgroup": [128, 1, 1],
+      "width": 2,
+      "variant": "bstream/w2-x128",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    },
+    {
+      "template": "bstream-msplit",
+      "family": "sparse",
+      "threadgroup": [32, 4, 1],
+      "width": 2,
+      "params": {"bsz": 16},
+      "variant": "bstream-msplit/w2-m4-b16-x32",
+      "conditions": {"field": "aligne", "divisible-by": 2}
+    }
+  ]
+}
