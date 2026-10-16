@@ -32,8 +32,8 @@ class PTXMatMul(MatMul):
         cc_appropriate = cc in self.PTX_SM and cc >= (9, 0)
 
         # These templates implement a beta of zero and of one only
-        return (self.A.dtype in (np.float32, np.float64) and cc_appropriate and
-                self.beta in (0, 1) and self.m <= 128 and self.k <= 128)
+        return (cc_appropriate and self.beta in (0, 1) and self.m <= 128 and
+                self.k <= 128)
 
     def _kernel_generators(self, dtype, dsize, *, sigs,
                            compute_capability=None, smem_max=None):
@@ -55,8 +55,6 @@ class PTXMatMul(MatMul):
 
         cfgs = config['kernels']
         cfg = [k for k in cfgs if self._usable_config(k, dtype, cc)]
-        if dtype == 'float' and self._sparse_viable(cc):
-            cfg.sort(key=lambda k: k['family'] == 'dense')
 
         for k in cfg:
             prepared = self._get_render_args(k, dtype, dsize, target_cc, ptx,
@@ -96,13 +94,13 @@ class PTXMatMul(MatMul):
             case 'dense':
                 if dtype == 'float':
                     cfg = self._sdense_args(kernel_cfg, params, smem_max,
-                                          base_args, base_meta)
+                                            base_args, base_meta)
                 else:
                     cfg = self._ddense_args(kernel_cfg, params, cc, dtype,
-                                           dsize, base_args, base_meta)
+                                            dsize, base_args, base_meta)
             case 'dense-ws':
                 cfg = self._ddense_ws_args(kernel_cfg, params, cc, smem_max,
-                                          dtype, dsize, base_args, base_meta)
+                                           dtype, dsize, base_args, base_meta)
             case _:
                 raise ValueError(f'Unknown PTX template family for {tpl}')
 
@@ -142,18 +140,16 @@ class PTXMatMul(MatMul):
             return None
 
         # Check for block reconfig
-        threads = cfg['block'][0]
-        groups = -(-self.m // mt)
-        width = cfg['width']
-        if threads < groups:
+        block_dim, groups = cfg['block'][0], -(-self.m // mt)
+        if block_dim < groups:
             return None
 
-        workers = 1 << (min(32, threads // groups).bit_length() - 1)
-        threads = groups*workers
-        panel = workers*nt
-        if self.aligne is None or self.aligne % width:
+        # Adjust blocking
+        workers = 1 << (min(32, block_dim // groups).bit_length() - 1)
+        threads, panel = groups*workers, nt*wrokers
+        if (self.aligne is None) or self.aligne % cfg['width']:
             return None
-        if self.n is not None and (self.ldb % 4 or self.ldc % width):
+        if (self.n is not None) and (self.ldb % 4 or self.ldc % cfg['width']):
             return None
         if panel > 256:
             return None
@@ -161,28 +157,20 @@ class PTXMatMul(MatMul):
         grid = ({'div': div} if self.n is None else -(-self.n // div))
 
         # Pad A for loading
-        mpad = groups*mt
-        kpad = -(-self.k // kt)*kt
+        mpad, kpad = groups*mt, -(-self.k // kt)*kt
         a = np.zeros((self.k, mpad), dtype=np.float32)
         a[:, :self.m] = self.A.T
         a_words = a.ravel()
 
-        abytes = a_words.nbytes
-        bbytes = panel*kt*4
+        # Check smem
+        abytes, bbytes = a_words.nbytes, panel*kt*4
         smem = -(-abytes // 128)*128 + 2*bbytes + 8
-        if smem_max is not None and smem > smem_max:
+        if (smem_max is not None) and smem > smem_max:
             return None
 
-        args |= {'mt': mt,
-                 'nt': nt,
-                 'kt': kt,
-                 'groups': groups,
-                 'workers': workers,
-                 'mpad': mpad,
-                 'kpad': kpad,
-                 'panel': panel,
-                 'abytes': abytes,
-                 'bbytes': bbytes,
+        args |= {'mt': mt, 'nt': nt, 'kt': kt, 'groups': groups,
+                 'workers': workers, 'mpad': mpad, 'kpad': kpad,
+                 'panel': panel, 'abytes': abytes, 'bbytes': bbytes,
                  'a_u32': [f'0x{x:08x}' for x in a_words.view(np.uint32)],
                  'k_used': [bool(np.any(self.A[:, i])) for i in range(self.k)],
                  'ffma2': params.get('ffma2', False),
