@@ -28,12 +28,12 @@ class PTXMatMul(MatMul):
         return self._unrolled_viable() and cc >= (7, 0)
 
     def _dense_viable(self, cc):
-        # True when the target and operator admit the dense DMMA kernels
+        # True when the target and operator admit dense GEMM kernels
         cc_appropriate = cc in self.PTX_SM and cc >= (9, 0)
 
         # These templates implement a beta of zero and of one only
-        return (self.A.dtype == np.float64 and cc_appropriate and
-                self.beta in (0, 1) and self.m <= 128 and self.k <= 128)
+        return (cc_appropriate and self.beta in (0, 1) and self.m <= 128 and
+                self.k <= 128)
 
     def _kernel_generators(self, dtype, dsize, *, sigs,
                            compute_capability=None, smem_max=None):
@@ -92,11 +92,15 @@ class PTXMatMul(MatMul):
                 cfg = self._sparse_args(tpl, params, block, dtype, dsize,
                                         base_args, base_meta)
             case 'dense':
-                cfg = self._dense_args(kernel_cfg, params, cc, dtype, dsize,
-                                       base_args, base_meta)
+                if dtype == 'float':
+                    cfg = self._sdense_args(kernel_cfg, params, smem_max,
+                                            base_args, base_meta)
+                else:
+                    cfg = self._ddense_args(kernel_cfg, params, cc, dtype,
+                                            dsize, base_args, base_meta)
             case 'dense-ws':
-                cfg = self._dense_ws_args(kernel_cfg, params, cc, smem_max,
-                                          dtype, dsize, base_args, base_meta)
+                cfg = self._ddense_ws_args(kernel_cfg, params, cc, smem_max,
+                                           dtype, dsize, base_args, base_meta)
             case _:
                 raise ValueError(f'Unknown PTX template family for {tpl}')
 
@@ -126,21 +130,81 @@ class PTXMatMul(MatMul):
                 args['blockx'] = blockx
         return tpl, args, meta
 
-    def _b_tensormap(self, dtype, dsize, n_per_cta, k_pad):
-        # Tensor map for the B panel a descriptor kernel streams in
-        return tensormap_spec('b', self.NPTYPE[dtype], (n_per_cta, k_pad),
-                              (self.n, self.k), (self.ldb*dsize,))
+    def _sdense_args(self, cfg, params, smem_max, args, meta):
+        mt, nt, kt = params['mt'], params['nt'], params['kt']
 
-    def _c_tensormap(self, dtype, dsize, n_per_cta, m_pad):
-        # Tensor map for the C panel a descriptor kernel stages out
-        return tensormap_spec('c', self.NPTYPE[dtype], (n_per_cta, m_pad),
-                              (self.n, self.m), (self.ldc*dsize,))
+        if mt % 4 or kt % 4:
+            return None
 
-    def _dense_args(self, kernel_cfg, params, cc, dtype, dsize, args, meta):
+        if params.get('ffma2', False) and args['cc'][0] < 10:
+            return None
+
+        # Check for block reconfig
+        block_dim, groups = cfg['block'][0], -(-self.m // mt)
+        if block_dim < groups:
+            return None
+
+        # Adjust blocking
+        workers = 1 << (min(32, block_dim // groups).bit_length() - 1)
+        threads, panel = groups*workers, nt*wrokers
+        if (self.aligne is None) or self.aligne % cfg['width']:
+            return None
+        if (self.n is not None) and (self.ldb % 4 or self.ldc % cfg['width']):
+            return None
+        if panel > 256:
+            return None
+        div = panel * params['iters']
+        grid = ({'div': div} if self.n is None else -(-self.n // div))
+
+        # Pad A for loading
+        mpad, kpad = groups*mt, -(-self.k // kt)*kt
+        a = np.zeros((self.k, mpad), dtype=np.float32)
+        a[:, :self.m] = self.A.T
+        a_words = a.ravel()
+
+        # Check smem
+        abytes, bbytes = a_words.nbytes, panel*kt*4
+        smem = -(-abytes // 128)*128 + 2*bbytes + 8
+        if (smem_max is not None) and smem > smem_max:
+            return None
+
+        args |= {'mt': mt, 'nt': nt, 'kt': kt, 'groups': groups,
+                 'workers': workers, 'mpad': mpad, 'kpad': kpad,
+                 'panel': panel, 'abytes': abytes, 'bbytes': bbytes,
+                 'a_u32': [f'0x{x:08x}' for x in a_words.view(np.uint32)],
+                 'k_used': [bool(np.any(self.A[:, i])) for i in range(self.k)],
+                 'ffma2': params.get('ffma2', False),
+                 'prefetch_c': params.get('prefetch-c', False),
+                 'preload_c': params.get('preload-c', False),
+                 'zero_chunks': [sum(1 << g for g in range(groups)
+                                     if not np.any(a[i:i+4, g*mt:(g+1)*mt]))
+                                 for i in range(0, kpad, 4)],
+                 'zero_groups': [[g for g in range(groups)
+                                  if not np.any(a[i:i+kt, g*mt:(g+1)*mt])]
+                                 for i in range(0, kpad, kt)]}
+        meta |= {'grid': (grid, 1, 1),
+                 'block': (threads, 1, 1),
+                 'shared': smem,
+                 'sig': SIG_BDESC_C,
+                 'operands': {'b_desc': tensormap_spec(
+                     'b', np.float32, (panel, kt), (self.n, self.k),
+                     (4*self.ldb if self.ldb is not None else None,))}}
+        return cfg['template'], args, meta
+
+    def operands(self, meta, n=None, ldb=None, ldc=None):
+        operands = super().operands(meta, n, ldb, ldc)
+        if meta['tplname'].startswith('smma-') and 'n' in meta['args']:
+            spec = operands['b_desc']
+            operands = operands | {'b_desc': spec | {
+                'global_dim': (n or self.n, self.k),
+                'global_stride': (4*(ldb or self.ldb),)}}
+        return operands
+
+    def _ddense_args(self, kernel_cfg, params, cc, dtype, dsize, args, meta):
         tpl, tile = kernel_cfg['template'], kernel_cfg['tile']
         nn, warps, width = params['nn'], params['warps'], kernel_cfg['width']
 
-        setup = self._dense_common(nn, warps, tile, cc, width)
+        setup = self._ddense_common(nn, warps, tile, cc, width)
         if setup is None:
             return None
 
@@ -181,7 +245,7 @@ class PTXMatMul(MatMul):
 
         return tpl, args, meta
 
-    def _dense_common(self, nn, warps_per_cta, tile, cc, width=None):
+    def _ddense_common(self, nn, warps_per_cta, tile, cc, width=None):
         tile_m, tile_n, tile_k = tile['m'], tile['n'], tile['k']
         ptx_shape = f'm{tile_m}n{tile_n}k{tile_k}'
 
@@ -264,7 +328,7 @@ class PTXMatMul(MatMul):
             'pm_runtime': pm_runtime,
         }
 
-    def _dense_ws_args(self, kernel_cfg, params, cc, smem_max, dtype, dsize,
+    def _ddense_ws_args(self, kernel_cfg, params, cc, smem_max, dtype, dsize,
                        args, meta):
         tpl = kernel_cfg['template']
         nn = params['nn']
@@ -283,7 +347,7 @@ class PTXMatMul(MatMul):
                                  f'{tpl}')
 
         n_comp_warps = warp_map['compute-count']
-        setup = self._dense_common(nn, n_comp_warps, tile, cc)
+        setup = self._ddense_common(nn, n_comp_warps, tile, cc)
         if setup is None:
             return None
 
@@ -352,6 +416,16 @@ class PTXMatMul(MatMul):
 
         return tpl, args, meta
 
+    def _b_tensormap(self, dtype, dsize, n_per_cta, k_pad):
+        # Tensor map for the B panel a descriptor kernel streams in
+        return tensormap_spec('b', self.NPTYPE[dtype], (n_per_cta, k_pad),
+                              (self.n, self.k), (self.ldb*dsize,))
+
+    def _c_tensormap(self, dtype, dsize, n_per_cta, m_pad):
+        # Tensor map for the C panel a descriptor kernel stages out
+        return tensormap_spec('c', self.NPTYPE[dtype], (n_per_cta, m_pad),
+                              (self.n, self.m), (self.ldc*dsize,))
+
     def _usable_config(self, kernel_cfg, dtype, cc):
         family = kernel_cfg['family']
 
@@ -359,8 +433,11 @@ class PTXMatMul(MatMul):
             if not self._sparse_viable(cc):
                 return False
         elif family in {'dense', 'dense-ws'}:
-            dense = self._dense_viable(cc)
-            if dtype != 'double' or self.n is None or not dense:
+            if not self._dense_viable(cc):
+                return False
+            if family == 'dense-ws' and dtype != 'double':
+                return False
+            if self.n is None and (family != 'dense' or dtype != 'float'):
                 return False
 
         condition = kernel_cfg.get('conditions')
@@ -381,7 +458,6 @@ class PTXMatMul(MatMul):
         return self._get_config(f'default-{dtype}')
 
     def _matmul_stats(self, dtype, cc):
-        nnz = np.count_nonzero(self.A)
         return {
             'dtype': dtype,
             'm': self.m,
@@ -390,9 +466,9 @@ class PTXMatMul(MatMul):
             'beta': self.beta,
             'beta-zero': self.beta == 0,
             'aligne': self.aligne,
-            'nnz': nnz,
-            'density': nnz / self.A.size,
-            'unique-abs': len(np.unique(np.abs(self.A))),
+            'nnz': self.nnz,
+            'density': self.nnz / self.A.size,
+            'unique-abs': self.unique_abs,
             'k-used': len(self.bix),
             'cc': list(cc),
         }
