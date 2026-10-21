@@ -89,24 +89,22 @@ class PTXMatMul(MatMul):
 
         match family:
             case 'sparse':
-                cfg = self._sparse_args(tpl, params, block, dtype, dsize,
-                                        base_args, base_meta)
+                build = self._sparse_args
+            case 'smma':
+                build = self._smma_args
             case 'dense':
-                if dtype == 'float':
-                    cfg = self._sdense_args(kernel_cfg, params, smem_max,
-                                            base_args, base_meta)
-                else:
-                    cfg = self._ddense_args(kernel_cfg, params, cc, dtype,
-                                            dsize, base_args, base_meta)
+                build = self._dmma_args
             case 'dense-ws':
-                cfg = self._ddense_ws_args(kernel_cfg, params, cc, smem_max,
-                                           dtype, dsize, base_args, base_meta)
+                build = self._dmma_ws_args
             case _:
                 raise ValueError(f'Unknown PTX template family for {tpl}')
 
-        return cfg
+        return build(kernel_cfg, params, dtype, dsize, cc, smem_max,
+                     base_args, base_meta)
 
-    def _sparse_args(self, tpl, params, block, dtype, dsize, args, meta):
+    def _sparse_args(self, kernel_cfg, params, dtype, dsize, cc, smem_max,
+                     args, meta):
+        tpl, block = kernel_cfg['template'], meta['block']
         blockx = block[0]
         args |= {
             'has_zero_rows': bool(self.has_zero_rows),
@@ -130,81 +128,90 @@ class PTXMatMul(MatMul):
                 args['blockx'] = blockx
         return tpl, args, meta
 
-    def _sdense_args(self, cfg, params, smem_max, args, meta):
+    def _b_tensormap(self, dtype, dsize, n_per_cta, k_pad):
+        # Tensor map for the B panel a descriptor kernel streams in
+        ldb = None if self.ldb is None else self.ldb*dsize
+
+        return tensormap_spec('b', self.NPTYPE[dtype], (n_per_cta, k_pad),
+                              (self.n, self.k), (ldb,))
+
+    def _c_tensormap(self, dtype, dsize, n_per_cta, m_pad):
+        # Tensor map for the C panel a descriptor kernel stages out
+        return tensormap_spec('c', self.NPTYPE[dtype], (n_per_cta, m_pad),
+                              (self.n, self.m), (self.ldc*dsize,))
+
+    def _smma_args(self, kernel_cfg, params, dtype, dsize, cc, smem_max,
+                   args, meta):
+        tpl, width = kernel_cfg['template'], args['width']
         mt, nt, kt = params['mt'], params['nt'], params['kt']
 
-        if mt % 4 or kt % 4:
+        if params.get('ffma2', False) and cc[0] < 10:
             return None
 
-        if params.get('ffma2', False) and args['cc'][0] < 10:
-            return None
+        # Stream all of K through one panel per tile when no kt is given
+        if kt is None:
+            kt = -(-self.k // 4)*4
 
-        # Check for block reconfig
-        block_dim, groups = cfg['block'][0], -(-self.m // mt)
-        if block_dim < groups:
-            return None
+        if mt % 4 or kt % 4 or nt % width:
+            raise ValueError(f'Invalid tile shape for {tpl}')
 
-        # Adjust blocking
-        workers = 1 << (min(32, block_dim // groups).bit_length() - 1)
-        threads, panel = groups*workers, nt*wrokers
-        if (self.aligne is None) or self.aligne % cfg['width']:
+        # Lane groups per block, workers per group and the resulting B panel
+        groups = -(-self.m // mt)
+        if meta['block'][0] < groups:
             return None
-        if (self.n is not None) and (self.ldb % 4 or self.ldc % cfg['width']):
-            return None
+        workers = 1 << (min(32, meta['block'][0] // groups).bit_length() - 1)
+        panel = nt*workers
+
         if panel > 256:
             return None
-        div = panel * params['iters']
-        grid = ({'div': div} if self.n is None else -(-self.n // div))
 
         # Pad A for loading
         mpad, kpad = groups*mt, -(-self.k // kt)*kt
         a = np.zeros((self.k, mpad), dtype=np.float32)
         a[:, :self.m] = self.A.T
-        a_words = a.ravel()
 
         # Check smem
-        abytes, bbytes = a_words.nbytes, panel*kt*4
+        abytes = a.nbytes
+        # Fold a final four-column tail into one panel when shared memory permits.
+        if kt < self.k <= kt + 4:
+            full_kt = -(-self.k // 4)*4
+            full_smem = -(-abytes // 128)*128 + 2*panel*full_kt*dsize + 8
+            if smem_max is None or full_smem <= smem_max:
+                kt = kpad = full_kt
+        bbytes = panel*kt*dsize
         smem = -(-abytes // 128)*128 + 2*bbytes + 8
-        if (smem_max is not None) and smem > smem_max:
+        if smem_max is not None and smem > smem_max:
             return None
 
-        args |= {'mt': mt, 'nt': nt, 'kt': kt, 'groups': groups,
-                 'workers': workers, 'mpad': mpad, 'kpad': kpad,
-                 'panel': panel, 'abytes': abytes, 'bbytes': bbytes,
-                 'a_u32': [f'0x{x:08x}' for x in a_words.view(np.uint32)],
-                 'k_used': [bool(np.any(self.A[:, i])) for i in range(self.k)],
-                 'ffma2': params.get('ffma2', False),
-                 'prefetch_c': params.get('prefetch-c', False),
-                 'preload_c': params.get('preload-c', False),
-                 'zero_chunks': [sum(1 << g for g in range(groups)
-                                     if not np.any(a[i:i+4, g*mt:(g+1)*mt]))
-                                 for i in range(0, kpad, 4)],
-                 'zero_groups': [[g for g in range(groups)
-                                  if not np.any(a[i:i+kt, g*mt:(g+1)*mt])]
-                                 for i in range(0, kpad, kt)]}
-        meta |= {'grid': (grid, 1, 1),
-                 'block': (threads, 1, 1),
-                 'shared': smem,
-                 'sig': SIG_BDESC_C,
-                 'operands': {'b_desc': tensormap_spec(
-                     'b', np.float32, (panel, kt), (self.n, self.k),
-                     (4*self.ldb if self.ldb is not None else None,))}}
-        return cfg['template'], args, meta
+        # Flag the four-column chunks of each lane group which are all zero
+        apad = np.pad(a, ((0, kpad - self.k), (0, 0)))
+        zero = ~apad.reshape(kpad // 4, 4, groups, mt).any(axis=(1, 3))
 
-    def operands(self, meta, n=None, ldb=None, ldc=None):
-        operands = super().operands(meta, n, ldb, ldc)
-        if meta['tplname'].startswith('smma-') and 'n' in meta['args']:
-            spec = operands['b_desc']
-            operands = operands | {'b_desc': spec | {
-                'global_dim': (n or self.n, self.k),
-                'global_stride': (4*(ldb or self.ldb),)}}
-        return operands
+        args |= {'ffma2': False, 'prefetch_c': False, 'preload_c': False}
+        args |= {k.replace('-', '_'): v for k, v in params.items()}
+        args |= {'groups': groups, 'workers': workers, 'mpad': mpad,
+                 'kt': kt, 'kpad': kpad, 'panel': panel, 'abytes': abytes,
+                 'bbytes': bbytes,
+                 'a_u32': [f'0x{x:08x}' for x in a.ravel().view(np.uint32)],
+                 'zero_chunks': [int(sum(1 << g for g in np.flatnonzero(z)))
+                                 for z in zero],
+                 'zero_groups': [np.flatnonzero(z.all(axis=0)).tolist()
+                                 for z in zero.reshape(-1, kt // 4, groups)]}
 
-    def _ddense_args(self, kernel_cfg, params, cc, dtype, dsize, args, meta):
+        # The kernel streams B through a tensor map and strides over N
+        b_desc = self._b_tensormap(dtype, dsize, panel, kt)
+        meta |= {'grid': ({'div': panel*params['iters']}, 1, 1),
+                 'block': (groups*workers, 1, 1), 'shared': smem,
+                 'sig': SIG_BDESC_C, 'operands': {'b_desc': b_desc}}
+
+        return tpl, args, meta
+
+    def _dmma_args(self, kernel_cfg, params, dtype, dsize, cc, smem_max,
+                   args, meta):
         tpl, tile = kernel_cfg['template'], kernel_cfg['tile']
         nn, warps, width = params['nn'], params['warps'], kernel_cfg['width']
 
-        setup = self._ddense_common(nn, warps, tile, cc, width)
+        setup = self._dmma_common(nn, warps, tile, cc, width)
         if setup is None:
             return None
 
@@ -245,7 +252,7 @@ class PTXMatMul(MatMul):
 
         return tpl, args, meta
 
-    def _ddense_common(self, nn, warps_per_cta, tile, cc, width=None):
+    def _dmma_common(self, nn, warps_per_cta, tile, cc, width=None):
         tile_m, tile_n, tile_k = tile['m'], tile['n'], tile['k']
         ptx_shape = f'm{tile_m}n{tile_n}k{tile_k}'
 
@@ -261,7 +268,7 @@ class PTXMatMul(MatMul):
         n_per_warp = tile_n*nn
         n_per_cta = warps_per_cta*n_per_warp
 
-        if n_per_cta > self.n:
+        if self.n is None or n_per_cta > self.n:
             return None
 
         if (width == 2
@@ -328,8 +335,8 @@ class PTXMatMul(MatMul):
             'pm_runtime': pm_runtime,
         }
 
-    def _ddense_ws_args(self, kernel_cfg, params, cc, smem_max, dtype, dsize,
-                       args, meta):
+    def _dmma_ws_args(self, kernel_cfg, params, dtype, dsize, cc, smem_max,
+                      args, meta):
         tpl = kernel_cfg['template']
         nn = params['nn']
         tile = kernel_cfg['tile']
@@ -347,7 +354,7 @@ class PTXMatMul(MatMul):
                                  f'{tpl}')
 
         n_comp_warps = warp_map['compute-count']
-        setup = self._ddense_common(nn, n_comp_warps, tile, cc)
+        setup = self._dmma_common(nn, n_comp_warps, tile, cc)
         if setup is None:
             return None
 
@@ -416,28 +423,14 @@ class PTXMatMul(MatMul):
 
         return tpl, args, meta
 
-    def _b_tensormap(self, dtype, dsize, n_per_cta, k_pad):
-        # Tensor map for the B panel a descriptor kernel streams in
-        return tensormap_spec('b', self.NPTYPE[dtype], (n_per_cta, k_pad),
-                              (self.n, self.k), (self.ldb*dsize,))
-
-    def _c_tensormap(self, dtype, dsize, n_per_cta, m_pad):
-        # Tensor map for the C panel a descriptor kernel stages out
-        return tensormap_spec('c', self.NPTYPE[dtype], (n_per_cta, m_pad),
-                              (self.n, self.m), (self.ldc*dsize,))
-
     def _usable_config(self, kernel_cfg, dtype, cc):
         family = kernel_cfg['family']
 
         if family == 'sparse':
             if not self._sparse_viable(cc):
                 return False
-        elif family in {'dense', 'dense-ws'}:
+        elif family in {'smma', 'dense', 'dense-ws'}:
             if not self._dense_viable(cc):
-                return False
-            if family == 'dense-ws' and dtype != 'double':
-                return False
-            if self.n is None and (family != 'dense' or dtype != 'float'):
                 return False
 
         condition = kernel_cfg.get('conditions')
@@ -463,6 +456,8 @@ class PTXMatMul(MatMul):
             'm': self.m,
             'k': self.k,
             'n': self.n,
+            'ldb': self.ldb,
+            'ldc': self.ldc,
             'beta': self.beta,
             'beta-zero': self.beta == 0,
             'aligne': self.aligne,

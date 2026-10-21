@@ -10,8 +10,8 @@
   ],
   "kernels": [
     {
-      "template": "smma-stride-v2",
-      "family": "dense",
+      "template": "smma-stride",
+      "family": "smma",
       "block": [
         256,
         1,
@@ -27,12 +27,27 @@
         "preload-c": false,
         "ffma2": false
       },
-      "conditions": null,
+      "conditions": {
+        "all": [
+          {
+            "field": "aligne",
+            "is-not": null
+          },
+          {
+            "field": "aligne",
+            "divisible-by": 2
+          },
+          {
+            "field": "ldb",
+            "is-null-or-divisible-by": 4
+          }
+        ]
+      },
       "variant": "smma-stride-v2/m4-n4-k32-b256-i4"
     },
     {
-      "template": "smma-stride-v4",
-      "family": "dense",
+      "template": "smma-stride",
+      "family": "smma",
       "block": [
         256,
         1,
@@ -49,14 +64,30 @@
         "ffma2": false
       },
       "conditions": {
-        "field": "beta",
-        "eq": 1
+        "all": [
+          {
+            "field": "aligne",
+            "is-not": null
+          },
+          {
+            "field": "aligne",
+            "divisible-by": 4
+          },
+          {
+            "field": "ldb",
+            "is-null-or-divisible-by": 4
+          },
+          {
+            "field": "beta",
+            "eq": 1
+          }
+        ]
       },
       "variant": "smma-stride-v4/m4-n4-k32-b256-i4-preload"
     },
     {
-      "template": "smma-stride-v4",
-      "family": "dense",
+      "template": "smma-stride",
+      "family": "smma",
       "block": [
         256,
         1,
@@ -72,12 +103,27 @@
         "preload-c": false,
         "ffma2": false
       },
-      "conditions": null,
+      "conditions": {
+        "all": [
+          {
+            "field": "aligne",
+            "is-not": null
+          },
+          {
+            "field": "aligne",
+            "divisible-by": 4
+          },
+          {
+            "field": "ldb",
+            "is-null-or-divisible-by": 4
+          }
+        ]
+      },
       "variant": "smma-stride-v4/m8-n4-k32-b256-i4"
     },
     {
-      "template": "smma-stride-v4",
-      "family": "dense",
+      "template": "smma-stride",
+      "family": "smma",
       "block": [
         160,
         1,
@@ -94,14 +140,30 @@
         "ffma2": false
       },
       "conditions": {
-        "field": "beta",
-        "eq": 1
+        "all": [
+          {
+            "field": "aligne",
+            "is-not": null
+          },
+          {
+            "field": "aligne",
+            "divisible-by": 4
+          },
+          {
+            "field": "ldb",
+            "is-null-or-divisible-by": 4
+          },
+          {
+            "field": "beta",
+            "eq": 1
+          }
+        ]
       },
       "variant": "smma-stride-v4/m8-n4-k32-b160-i4-preload"
     },
     {
-      "template": "smma-stride-v4",
-      "family": "dense",
+      "template": "smma-stride",
+      "family": "smma",
       "block": [
         160,
         1,
@@ -117,12 +179,27 @@
         "preload-c": false,
         "ffma2": false
       },
-      "conditions": null,
+      "conditions": {
+        "all": [
+          {
+            "field": "aligne",
+            "is-not": null
+          },
+          {
+            "field": "aligne",
+            "divisible-by": 4
+          },
+          {
+            "field": "ldb",
+            "is-null-or-divisible-by": 4
+          }
+        ]
+      },
       "variant": "smma-stride-v4/m8-n4-k16-b160-i4"
     },
     {
-      "template": "smma-stride-v2",
-      "family": "dense",
+      "template": "smma-stride",
+      "family": "smma",
       "block": [
         160,
         1,
@@ -138,12 +215,27 @@
         "preload-c": false,
         "ffma2": false
       },
-      "conditions": null,
+      "conditions": {
+        "all": [
+          {
+            "field": "aligne",
+            "is-not": null
+          },
+          {
+            "field": "aligne",
+            "divisible-by": 2
+          },
+          {
+            "field": "ldb",
+            "is-null-or-divisible-by": 4
+          }
+        ]
+      },
       "variant": "smma-stride-v2/m8-n4-k32-b160-i8"
     },
     {
-      "template": "smma-stride-v4",
-      "family": "dense",
+      "template": "smma-stride",
+      "family": "smma",
       "block": [
         256,
         1,
@@ -160,14 +252,30 @@
         "ffma2": false
       },
       "conditions": {
-        "field": "beta",
-        "eq": 1
+        "all": [
+          {
+            "field": "aligne",
+            "is-not": null
+          },
+          {
+            "field": "aligne",
+            "divisible-by": 4
+          },
+          {
+            "field": "ldb",
+            "is-null-or-divisible-by": 4
+          },
+          {
+            "field": "beta",
+            "eq": 1
+          }
+        ]
       },
       "variant": "smma-stride-v4/m4-n4-k32-b256-i8-preload"
     },
     {
-      "template": "smma-stride-v2",
-      "family": "dense",
+      "template": "smma-stride",
+      "family": "smma",
       "block": [
         256,
         1,
@@ -184,8 +292,24 @@
         "ffma2": false
       },
       "conditions": {
-        "field": "beta",
-        "eq": 1
+        "all": [
+          {
+            "field": "aligne",
+            "is-not": null
+          },
+          {
+            "field": "aligne",
+            "divisible-by": 2
+          },
+          {
+            "field": "ldb",
+            "is-null-or-divisible-by": 4
+          },
+          {
+            "field": "beta",
+            "eq": 1
+          }
+        ]
       },
       "variant": "smma-stride-v2/m4-n4-k32-b256-i4-preload"
     },
