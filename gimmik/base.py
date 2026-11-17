@@ -240,6 +240,7 @@ class MatMul:
 
         # Incrementally generate and render the kernels
         gen = self._kernel_generators(dtype, dsize, sigs=sigs, **kwargs)
+        seen = set()
         try:
             resp = None
             while True:
@@ -268,6 +269,13 @@ class MatMul:
                 # Post-process the metadata
                 meta['tplname'] = name
                 self._process_meta(meta, nbaked)
+
+                # Hand back each distinct kernel and launch geometry once
+                key = (src, json.dumps(meta['launch'], sort_keys=True))
+                if key in seen:
+                    resp = None
+                    continue
+                seen.add(key)
 
                 # Yield the source and metadata and await a response
                 resp = yield (src, meta)
@@ -358,7 +366,19 @@ class MatMul:
 
     def operands(self, meta, n=None, ldb=None, ldc=None):
         # Operand descriptions, resolved against the sizes of a launch
-        return meta['operands']
+        ld = {'b': ldb, 'c': ldc}
+        operands = {}
+
+        for name, spec in meta['operands'].items():
+            # Fill in the extent and stride a runtime-n tensor map left open
+            if None in spec.get('global_dim', ()):
+                isz = spec['dtype'].itemsize
+                spec = spec | {'global_dim': (n, *spec['global_dim'][1:]),
+                               'global_stride': (ld[spec['operand']]*isz,)}
+
+            operands[name] = spec
+
+        return operands
 
     def pack_a(self, meta, a=None):
         # Lay A out as the kernel described by meta expects to find it
